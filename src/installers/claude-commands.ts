@@ -126,7 +126,31 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
      -H "Content-Type: application/json" \\
      -d '{"comment_text":"[RED TEAM] <findings with severity ratings>"}'
 
-3. DECISION:
+3. CHECK FOR NEW STAKEHOLDER INPUT:
+   Before making a decision, re-fetch task comments to check for
+   new human input added while you were working:
+   curl -s "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment" \\
+     -H "Authorization: $CLICKUP_API_KEY"
+
+   Compare against comments you've already seen. Track the count
+   of comments you've read so far — any new ones are new input.
+
+   IGNORE comments that start with [ARCHITECT], [RED TEAM],
+   [CLAUDOPILOT], or [IMPLEMENT] — those are yours.
+
+   If there ARE new human comments:
+   - Read them carefully as additional requirements or clarifications
+   - Post an acknowledgment:
+     curl -s -X POST "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment" \\
+       -H "Authorization: $CLICKUP_API_KEY" \\
+       -H "Content-Type: application/json" \\
+       -d '{"comment_text":"[ARCHITECT] Noted new input: <brief summary>. Incorporating into next round."}'
+   - GO TO STEP 1 to revise the spec with the new input
+     (this does NOT count against the max rounds limit)
+
+   If there are no new human comments, proceed to DECISION.
+
+4. DECISION:
    - If ANY critical findings exist:
      GO TO STEP 1.
 
