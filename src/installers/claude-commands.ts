@@ -47,6 +47,17 @@ Read the task name, description, and any comments to understand
 what needs to be built. Also note the creator.id from the response —
 you may need it later if the task gets blocked.
 
+PRESERVE THE ORIGINAL REQUEST: Save the original task name and
+description (before you modify anything). When you write the spec
+file, start it with:
+\\\`\\\`\\\`
+## Original Request
+> <original task name>
+>
+> <original task description, or "No description provided" if empty>
+\\\`\\\`\\\`
+This preserves what the human actually asked for.
+
 Check if a specs/[feature-name].md file already exists for this task.
 If it does, this is a CONTINUATION of a previous planning session.
 Read the existing spec and all ClickUp comments to understand what
