@@ -65,6 +65,8 @@ export interface GitHubConfig {
   owner: string;
   repos: string[];
   anthropicKeySecretName: string;
+  commitName: string;
+  commitEmail: string;
 }
 
 export interface CloudflareConfig {

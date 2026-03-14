@@ -260,7 +260,7 @@ export async function init(options: InitOptions): Promise<void> {
       ],
     },
     pm: { tool: pmConfig.tool, workspaceId: pmConfig.workspaceId, spaceId: pmConfig.spaceId, listId: pmConfig.listId, statuses },
-    github: { owner: githubConfig.owner, repos: githubConfig.repos, anthropicKeySecretName: githubConfig.anthropicKeySecretName },
+    github: { owner: githubConfig.owner, repos: githubConfig.repos, anthropicKeySecretName: githubConfig.anthropicKeySecretName, commitName: githubConfig.commitName, commitEmail: githubConfig.commitEmail },
     cloudflare: cloudflareConfig
       ? { workerName: cloudflareConfig.workerName, workerUrl }
       : undefined,
@@ -289,7 +289,7 @@ export async function init(options: InitOptions): Promise<void> {
 
   await installClaudeMd(config);
   await installClaudeCommands(config);
-  await installGitHubActions();
+  await installGitHubActions(config.github);
   await installCodeRabbitConfig();
 
   // ─── Step 8: MCP setup instructions ───
@@ -553,10 +553,29 @@ async function setupGitHub(savedPat?: string, existing?: GitHubConfig): Promise<
     });
   }
 
+  // Git identity for CI commits (needed for Vercel deployments, etc.)
+  ui.hint([
+    "Commits made by the automation need a git identity.",
+    "Use your own name/email if your deploy platform (e.g., Vercel)",
+    "needs to recognize the committer.",
+  ]);
+
+  const commitName = await input({
+    message: "Git commit author name:",
+    default: existing?.commitName ?? owner,
+  });
+
+  const commitEmail = await input({
+    message: "Git commit author email:",
+    default: existing?.commitEmail,
+  });
+
   return {
     owner,
     repos: [selectedRepo],
     anthropicKeySecretName: existing?.anthropicKeySecretName ?? "ANTHROPIC_API_KEY",
+    commitName,
+    commitEmail,
     pat,
   };
 }

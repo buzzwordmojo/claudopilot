@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ui } from "../utils/ui.js";
+import type { GitHubConfig } from "../types.js";
 
 export async function installGitHubActions(
+  githubConfig: GitHubConfig,
   targetDir: string = process.cwd()
 ): Promise<void> {
   const workflowsDir = join(targetDir, ".github", "workflows");
@@ -20,7 +22,7 @@ export async function installGitHubActions(
 
   await writeFile(
     join(workflowsDir, "claudopilot-worker.yml"),
-    CLAUDOPILOT_WORKER_WORKFLOW
+    generateWorkerWorkflow(githubConfig)
   );
 
   ui.success("GitHub Actions workflows installed in .github/workflows/");
@@ -81,10 +83,15 @@ jobs:
           claude-api-key: \${{ secrets.ANTHROPIC_API_KEY }}
 `;
 
-const CLAUDOPILOT_WORKER_WORKFLOW = `name: Claudopilot Worker
+function generateWorkerWorkflow(config: GitHubConfig): string {
+  return `name: Claudopilot Worker
 on:
   repository_dispatch:
     types: [clickup-task]
+
+permissions:
+  contents: write
+  pull-requests: write
 
 env:
   CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
@@ -97,6 +104,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          token: \${{ secrets.GH_PAT }}
+
+      - name: Setup git identity
+        run: |
+          git config user.name "${config.commitName}"
+          git config user.email "${config.commitEmail}"
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
@@ -158,11 +171,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
           TASK_ID: \${{ github.event.client_payload.task_id }}
+          GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
           export ARGUMENTS="\$TASK_ID"
           PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '$ARGUMENTS $CLICKUP_API_KEY' < .claude/commands/implement.md)
           claude -p "\$PROMPT" \\
             --max-turns 50 \\
+            --verbose \\
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup*"
 
       - name: Comment — Implementation complete
@@ -185,3 +200,4 @@ jobs:
             -H "Content-Type: application/json" \\
             -d '{"comment_text":"❌ **[CLAUDOPILOT]** Implementation failed — check GitHub Actions logs."}'
 `;
+}
