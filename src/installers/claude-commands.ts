@@ -237,8 +237,10 @@ RULES:
   Only CRITICAL blocks progress.
 - Keep a running count: Round N of max ${config.redTeam.maxRounds}.
 - Every comment must start with [ARCHITECT] or [RED TEAM].
-- Append all rounds to the spec file. Do not overwrite
-  previous rounds. They are the audit trail.
+- The spec file should be the FINAL CLEAN RESULT — not an
+  append-only log. Each round, rewrite the spec to incorporate
+  red team feedback. The ClickUp comments ARE the audit trail.
+  The spec is the polished, ready-to-implement plan.
 `;
 }
 
