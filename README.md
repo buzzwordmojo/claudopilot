@@ -1,0 +1,232 @@
+# claudopilot
+
+One command turns any project into a self-driving development machine.
+
+A founder writes an idea in ClickUp. Claude plans it, red teams it, revises until bulletproof, asks humans when stuck, implements with TDD, creates a PR, and ships — all without anyone manually orchestrating the steps.
+
+## How it works
+
+```
+Founder creates task in ClickUp
+        |
+        v
+    PLANNING  <─────────────────┐
+        |  Claude drafts spec   | Red team found CRITICAL
+        v                       |
+    RED TEAM  ──────────────────┘
+        |  No CRITICAL issues
+        |
+        ├── Has questions? ──> BLOCKED (assign to human, wait)
+        |                        |  Human answers
+        |                        └──> back to PLANNING
+        v
+  AWAITING APPROVAL
+        |  Human approves
+        v
+    BUILDING
+        |  Claude implements (per-subtask commits)
+        |  Creates branch + PR
+        v
+    IN REVIEW
+        |  CodeRabbit + Security Review + Engineer
+        v
+      DONE
+```
+
+claudopilot wires together:
+
+- **ClickUp** as the source of truth (tasks, statuses, comments)
+- **Claude Code** as the architect, red team, and implementer
+- **GitHub Actions** as the execution engine
+- **Cloudflare Workers** as the webhook bridge (ClickUp → GitHub)
+- **CodeRabbit** for automated code review
+
+The user provides API keys. claudopilot creates everything else.
+
+## The adversarial planning loop
+
+Most AI coding workflows are one-shot: human writes prompt, AI writes code, human reviews. This is fragile.
+
+claudopilot introduces an adversarial loop where Claude plays both **architect** and **red team**. The red team can reject the architect's work and send it back for revision. The loop runs until the red team passes — no human babysitting required.
+
+The red team evaluates through standard lenses (architecture, security, data integrity, UX) plus **domain-specific lenses** that are auto-suggested by analyzing your codebase during setup.
+
+The key insight: the red team **owns the gate**. The spec doesn't advance until the red team says so. This catches flaws during planning when they're cheap to fix — not during code review when they're expensive.
+
+## Quick start
+
+```bash
+# In your project directory
+npx @buzzwordmojo/claudopilot init
+```
+
+The interactive wizard walks you through:
+
+1. **Project detection** — auto-detects Next.js, NestJS, FastAPI, Rails
+2. **ClickUp connection** — validates credentials, picks workspace/space/list, configures 9 lifecycle statuses
+3. **GitHub setup** — lists repos from your org, selects target
+4. **Red team config** — AI-analyzes your codebase to suggest domain-specific review lenses
+5. **Cloudflare Worker** — deploys webhook bridge (ClickUp → GitHub Actions)
+6. **File installation** — Claude commands, GitHub Actions workflows, CodeRabbit config
+7. **Secret setup** — sets `ANTHROPIC_API_KEY` and `CLICKUP_API_KEY` as GitHub repo secrets
+
+Everything saved to `.claudopilot.yaml` (config) and `.claudopilot.env` (secrets, gitignored). Re-running init pre-fills everything from the previous run.
+
+## What gets installed
+
+```
+your-project/
+├── .claude/commands/
+│   ├── plan-feature.md      # Architect/red team planning loop
+│   ├── red-team.md           # Standalone adversarial review
+│   └── implement.md          # TDD implementation with PR creation
+├── .github/workflows/
+│   ├── claude.yml             # Claude Code on @claude mentions
+│   ├── security-review.yml    # Security review on PRs
+│   └── claudopilot-worker.yml # Autonomous planning + implementation
+├── .coderabbit.yaml           # CodeRabbit review config
+├── .claudopilot.yaml          # Project config (safe to commit)
+└── .claudopilot.env           # Secrets (gitignored)
+```
+
+## CLI commands
+
+```bash
+claudopilot init          # Interactive setup wizard
+claudopilot doctor        # Verify all integrations are connected
+claudopilot status        # Show task pipeline from ClickUp
+```
+
+## Task lifecycle
+
+| Status | What happens |
+|--------|-------------|
+| **idea** | Task created, waiting to be picked up |
+| **planning** | Webhook fires. Claude runs architect/red team loop, posts comments to ClickUp, writes spec |
+| **red team** | Red team evaluation in progress |
+| **blocked** | Claude has questions — task assigned to human, waiting for answers |
+| **awaiting approval** | Spec complete — human reviews and approves |
+| **approved** | Webhook fires. Claude implements per subtask, creates branch + PR |
+| **building** | Implementation in progress |
+| **in review** | PR created — CodeRabbit + security review + human review |
+| **done** | Merged and shipped |
+
+## What the planning agent does
+
+When a task moves to "planning":
+
+1. Fetches task details from ClickUp API
+2. Reads existing spec (if resuming from blocked)
+3. Reads CLAUDE.md and architecture docs
+4. Runs architect/red team loop (configurable max rounds)
+5. Posts structured comments to the ClickUp task
+6. Writes spec to task description as markdown
+7. If blocked: assigns to task creator, moves to "blocked"
+8. If approved: moves to "awaiting approval"
+
+## What the implementation agent does
+
+When a task moves to "approved":
+
+1. Fetches task + spec from ClickUp
+2. Moves task to "building"
+3. Creates feature branch (`claudopilot/<task-id>`)
+4. Works through spec subtasks in order with per-subtask commits
+5. Pushes branch, creates PR via `gh`
+6. Posts PR link to ClickUp task
+7. Moves task to "in review"
+
+## Prerequisites
+
+- Node.js 20+
+- A ClickUp workspace
+- A GitHub repo
+- An Anthropic API key
+- `gh` CLI installed (for PR creation and secret management)
+- Cloudflare account (optional, for webhook bridge)
+
+## Configuration
+
+### .claudopilot.yaml (committed)
+
+```yaml
+version: '0.1.0'
+project:
+  name: my-project
+  type: nextjs
+pm:
+  tool: clickup
+  workspaceId: '...'
+  spaceId: '...'
+  listId: '...'
+  statuses:
+    idea: idea
+    planning: planning
+    # ... 9 statuses
+github:
+  owner: my-org
+  repos: [my-project]
+  commitName: Jane Developer
+  commitEmail: jane@example.com
+redTeam:
+  maxRounds: 5
+  domainLenses:
+    - name: External API Resilience
+      description: Ensure graceful handling of third-party API failures
+      checks:
+        - retry logic with backoff
+        - graceful degradation on outage
+        - rate limit handling
+```
+
+### .claudopilot.env (gitignored)
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+CLICKUP_API_KEY=pk_...
+GITHUB_PAT=github_pat_...
+CLOUDFLARE_API_TOKEN=...
+CLOUDFLARE_ACCOUNT_ID=...
+```
+
+## Architecture
+
+```
+src/
+├── cli.ts                    # Entry point, commander setup
+├── types.ts                  # Config schema, adapter interfaces
+├── commands/
+│   ├── init.ts               # Interactive setup wizard
+│   ├── doctor.ts             # Health checks
+│   └── status.ts             # Pipeline visualization
+├── adapters/
+│   └── clickup.ts            # ClickUp API adapter
+├── installers/
+│   ├── claude-commands.ts    # .claude/commands/ generator
+│   ├── github-actions.ts     # .github/workflows/ generator
+│   ├── cloudflare-worker.ts  # Cloudflare Worker deployment
+│   └── coderabbit.ts         # .coderabbit.yaml generator
+└── utils/
+    ├── analyze.ts            # AI-powered codebase analysis
+    ├── config.ts             # .claudopilot.yaml read/write
+    ├── detect.ts             # Project type + GitHub remote detection
+    ├── secrets.ts            # .claudopilot.env management
+    └── ui.ts                 # Terminal UI helpers
+```
+
+### Adding PM tool adapters
+
+PM tools implement the `PMAdapter` interface in `src/types.ts`. Currently only ClickUp is implemented. To add Jira or Linear, create a new adapter implementing the same interface.
+
+## Development
+
+```bash
+npm run build      # Build with tsup
+npm run dev        # Watch mode
+npm run start      # Run CLI
+npm run typecheck  # TypeScript check
+```
+
+## License
+
+MIT
