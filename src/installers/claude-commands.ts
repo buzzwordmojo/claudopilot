@@ -320,15 +320,24 @@ SETUP:
      -H "Content-Type: application/json" \\
      -d '{"comment":[{"text":"🔨 [IMPLEMENT] ","attributes":{"bold":true}},{"text":"Starting implementation. Reading spec and creating branch..."}]}'
 
-4. Create a feature branch:
-   git checkout -b claudopilot/$ARGUMENTS
+4. Check if a branch already exists (this may be a RESUMPTION):
+   git fetch origin claudopilot/$ARGUMENTS 2>/dev/null
+   If it exists: this is a continuation. Check out the existing branch:
+     git checkout claudopilot/$ARGUMENTS
+   Read git log to see what's already been committed. Read the
+   ClickUp comments to see which subtasks were completed.
+   Skip completed subtasks and continue from where it left off.
+   If it doesn't exist: create a new branch:
+     git checkout -b claudopilot/$ARGUMENTS
 
 5. Read CLAUDE.md for project patterns and standards.
 
 IMPLEMENTATION:
 
 Work through the implementation subtasks from the spec IN ORDER.
-For each subtask:
+Skip any subtasks that were already completed in a previous run
+(check git log and ClickUp comments).
+For each remaining subtask:
 
 a. Post a comment to ClickUp noting which subtask you're working on.
 b. Read the relevant files listed in the subtask.

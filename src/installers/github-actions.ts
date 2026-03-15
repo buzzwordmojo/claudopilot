@@ -100,7 +100,7 @@ env:
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,7 +128,7 @@ jobs:
       - name: Plan feature
         if: github.event.client_payload.status == 'planning'
         env:
-          ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
           TASK_ID: \${{ github.event.client_payload.task_id }}
         run: |
           export ARGUMENTS="\$TASK_ID"
@@ -175,21 +175,46 @@ jobs:
           git config user.email "${config.commitEmail}"
 
       - name: Implement feature
+        id: implement
         if: github.event.client_payload.status == 'approved'
+        continue-on-error: true
         env:
-          ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
           TASK_ID: \${{ github.event.client_payload.task_id }}
           GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
           export ARGUMENTS="\$TASK_ID"
           PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '$ARGUMENTS $CLICKUP_API_KEY' < .claude/commands/implement.md)
           claude -p "\$PROMPT" \\
-            --max-turns 50 \\
+            --max-turns 60 \\
             --verbose \\
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup*"
 
+      - name: Save progress if interrupted
+        if: github.event.client_payload.status == 'approved' && steps.implement.outcome == 'failure'
+        env:
+          TASK_ID: \${{ github.event.client_payload.task_id }}
+          GH_TOKEN: \${{ secrets.GH_PAT }}
+        run: |
+          BRANCH="claudopilot/\$TASK_ID"
+          CURRENT=$(git branch --show-current)
+          if [ "\$CURRENT" = "\$BRANCH" ]; then
+            git add -A
+            git diff --cached --quiet || git commit -m "WIP: save progress before turn limit"
+            git push origin "\$BRANCH" 2>/dev/null || git push --set-upstream origin "\$BRANCH"
+            echo "Progress saved to \$BRANCH"
+          fi
+          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"comment":[{"text":"⏸️ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation paused — reached turn limit. Progress has been saved to the branch. Move task back to Approved to continue where it left off."}]}'
+          curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"status":"blocked"}'
+
       - name: Wait for Vercel preview deployment
-        if: github.event.client_payload.status == 'approved' && success()
+        if: github.event.client_payload.status == 'approved' && steps.implement.outcome == 'success'
         id: vercel
         env:
           GH_TOKEN: \${{ secrets.GH_PAT }}
@@ -231,7 +256,7 @@ jobs:
           fi
 
       - name: Comment — Implementation complete
-        if: github.event.client_payload.status == 'approved' && success()
+        if: github.event.client_payload.status == 'approved' && steps.implement.outcome == 'success'
         env:
           TASK_ID: \${{ github.event.client_payload.task_id }}
           PREVIEW_URL: \${{ steps.vercel.outputs.preview_url }}
