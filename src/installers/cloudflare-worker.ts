@@ -4,7 +4,8 @@ import type { CloudflareConfig, GitHubConfig } from "../types.js";
 const WORKER_SCRIPT = (
   githubRepo: string,
   githubPat: string,
-  webhookSecret: string
+  webhookSecret: string,
+  clickupApiKey: string
 ) => `
 export default {
   async fetch(request, env) {
@@ -35,6 +36,25 @@ export default {
       return new Response('Status not tracked', { status: 200 });
     }
 
+    // Fetch task name from ClickUp
+    let taskName = '';
+    try {
+      const taskRes = await fetch(
+        'https://api.clickup.com/api/v2/task/' + taskId,
+        {
+          headers: {
+            Authorization: '${clickupApiKey}',
+          },
+        }
+      );
+      if (taskRes.ok) {
+        const taskData = await taskRes.json();
+        taskName = taskData.name || '';
+      }
+    } catch (e) {
+      // Continue without task name
+    }
+
     // Trigger GitHub Actions
     const response = await fetch(
       'https://api.github.com/repos/${githubRepo}/dispatches',
@@ -50,6 +70,7 @@ export default {
           client_payload: {
             task_id: taskId,
             status: newStatus,
+            task_name: taskName,
           },
         }),
       }
@@ -76,7 +97,8 @@ export default {
 export async function deployCloudflareWorker(
   cfConfig: CloudflareConfig,
   githubConfig: GitHubConfig,
-  githubPat: string
+  githubPat: string,
+  clickupApiKey?: string
 ): Promise<string> {
   const webhookSecret = generateSecret();
   const githubRepo = `${githubConfig.owner}/${githubConfig.repos[0]}`;
@@ -90,7 +112,8 @@ export async function deployCloudflareWorker(
     const scriptContent = WORKER_SCRIPT(
       githubRepo,
       githubPat,
-      webhookSecret
+      webhookSecret,
+      clickupApiKey || ""
     );
 
     const formData = new FormData();

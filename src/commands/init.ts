@@ -221,7 +221,8 @@ export async function init(options: InitOptions): Promise<void> {
         workerUrl = await deployCloudflareWorker(
           cloudflareConfig,
           githubConfig,
-          githubConfig.pat
+          githubConfig.pat,
+          pmConfig.apiKey
         );
 
         // Create ClickUp webhook pointing to the worker
