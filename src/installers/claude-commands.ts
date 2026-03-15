@@ -350,6 +350,13 @@ e. Run any available checks:
    Only run checks that are defined in the project. Skip if not available.
 f. Commit the subtask with a descriptive message.
 g. Post a comment to ClickUp confirming the subtask is done.
+h. If the subtask exists as a ClickUp subtask, mark it done:
+     curl -s -X PUT "https://api.clickup.com/api/v2/task/<subtask_id>" \\
+       -H "Authorization: $CLICKUP_API_KEY" \\
+       -H "Content-Type: application/json" \\
+       -d '{"status":"done"}'
+     (Get the subtask IDs from the parent task's subtasks list
+     fetched in step 1. Match by name.)
 
 FINALIZE:
 
