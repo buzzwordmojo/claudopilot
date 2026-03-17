@@ -84,8 +84,10 @@ jobs:
 `;
 
 function generateWorkerWorkflow(config: GitHubConfig): string {
+  const e = (s: string) => s; // no-op, keeps template readable
+  // All ${{ }} and $ env refs need \$ in the template literal
   return `name: Claudopilot Worker
-run-name: "\${{ github.event.client_payload.status }} — task \${{ github.event.client_payload.task_id }}"
+run-name: "\${{ github.event.client_payload.status }} — \${{ github.event.client_payload.task_name || github.event.client_payload.task_id }}"
 on:
   repository_dispatch:
     types: [clickup-task]
@@ -96,18 +98,131 @@ permissions:
 
 env:
   CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
+  TASK_ID: \${{ github.event.client_payload.task_id }}
+  BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}
+
+# ═══════════════════════════════════════════
+# PLANNING
+# ═══════════════════════════════════════════
 
 jobs:
-  process:
+  plan-setup:
+    if: github.event.client_payload.status == 'planning'
+    name: 📋 Planning Setup
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
+    steps:
+      - name: Post started comment
+        run: |
+          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"comment":[{"text":"🤖 [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning started — architect/red team loop running..."}]}'
+
+  plan:
+    if: github.event.client_payload.status == 'planning'
+    name: 🏗️ Architect / Red Team Loop
+    needs: plan-setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
           token: \${{ secrets.GH_PAT }}
 
-      - name: Setup git identity
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run planning loop
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
+        run: |
+          export ARGUMENTS="\$TASK_ID"
+          PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '\$ARGUMENTS \$CLICKUP_API_KEY' < .claude/commands/plan-feature.md)
+          claude -p "\$PROMPT" \\
+            --max-turns 60 \\
+            --verbose \\
+            --allowedTools "Read,Edit,Write,Bash(git *),Bash(curl *),mcp__clickup*"
+
+  plan-complete:
+    if: github.event.client_payload.status == 'planning' && always()
+    name: 📋 Planning Result
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post result
+        run: |
+          if [ "\${{ needs.plan.result }}" = "success" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment":[{"text":"✅ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning complete — spec ready for review."}]}'
+          else
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment":[{"text":"❌ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning failed — check GitHub Actions logs."}]}'
+          fi
+
+  # ═══════════════════════════════════════════
+  # IMPLEMENTATION
+  # ═══════════════════════════════════════════
+
+  impl-setup:
+    if: github.event.client_payload.status == 'approved'
+    name: 🔨 Setup Branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: \${{ secrets.GH_PAT }}
+
+      - name: Move to building + comment
+        run: |
+          curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"status":"building"}'
+          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"comment":[{"text":"🤖 [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation started — writing tests and code..."}]}'
+
+      - name: Create or resume branch
+        run: |
+          git config user.name "${config.commitName}"
+          git config user.email "${config.commitEmail}"
+          if git fetch origin "\$BRANCH" 2>/dev/null; then
+            echo "Resuming existing branch \$BRANCH"
+            git checkout "\$BRANCH"
+            git rebase origin/main || git rebase --abort
+            git push --force-with-lease origin "\$BRANCH"
+          else
+            echo "Creating new branch \$BRANCH"
+            git checkout -b "\$BRANCH"
+            git push --set-upstream origin "\$BRANCH"
+          fi
+
+  implement:
+    if: github.event.client_payload.status == 'approved'
+    name: 🔨 Implement Feature
+    needs: impl-setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      outcome: \${{ steps.claude.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ env.BRANCH }}
+          fetch-depth: 0
+          token: \${{ secrets.GH_PAT }}
+
+      - name: Setup git
         run: |
           git config user.name "${config.commitName}"
           git config user.email "${config.commitEmail}"
@@ -115,110 +230,114 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Comment — Planning started
-        if: github.event.client_payload.status == 'planning'
-        env:
-          TASK_ID: \${{ github.event.client_payload.task_id }}
-        run: |
-          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
-            -H "Authorization: \$CLICKUP_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"🤖 [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning started — architect/red team loop running..."}]}'
-
-      - name: Plan feature
-        if: github.event.client_payload.status == 'planning'
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
-          TASK_ID: \${{ github.event.client_payload.task_id }}
-        run: |
-          export ARGUMENTS="\$TASK_ID"
-          PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '$ARGUMENTS $CLICKUP_API_KEY' < .claude/commands/plan-feature.md)
-          claude -p "\$PROMPT" \\
-            --max-turns 60 \\
-            --verbose \\
-            --allowedTools "Read,Edit,Write,Bash(git *),Bash(curl *),mcp__clickup*"
-
-      - name: Comment — Planning complete
-        if: github.event.client_payload.status == 'planning' && success()
-        env:
-          TASK_ID: \${{ github.event.client_payload.task_id }}
-        run: |
-          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
-            -H "Authorization: \$CLICKUP_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"✅ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning complete — spec ready for review."}]}'
-
-      - name: Comment — Planning failed
-        if: github.event.client_payload.status == 'planning' && failure()
-        env:
-          TASK_ID: \${{ github.event.client_payload.task_id }}
-        run: |
-          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
-            -H "Authorization: \$CLICKUP_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"❌ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning failed — check GitHub Actions logs."}]}'
-
-      - name: Comment — Implementation started
-        if: github.event.client_payload.status == 'approved'
-        env:
-          TASK_ID: \${{ github.event.client_payload.task_id }}
-        run: |
-          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
-            -H "Authorization: \$CLICKUP_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"🤖 [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation started — writing tests and code..."}]}'
-
-      - name: Setup git for commits
-        if: github.event.client_payload.status == 'approved'
-        run: |
-          git config user.name "${config.commitName}"
-          git config user.email "${config.commitEmail}"
-
-      - name: Implement feature
-        id: implement
-        if: github.event.client_payload.status == 'approved'
+      - name: Write code
+        id: claude
         continue-on-error: true
         env:
           CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
-          TASK_ID: \${{ github.event.client_payload.task_id }}
           GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
           export ARGUMENTS="\$TASK_ID"
-          PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '$ARGUMENTS $CLICKUP_API_KEY' < .claude/commands/implement.md)
+          PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '\$ARGUMENTS \$CLICKUP_API_KEY' < .claude/commands/implement.md)
           claude -p "\$PROMPT" \\
             --max-turns 60 \\
             --verbose \\
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup*"
 
-      - name: Save progress if interrupted
-        if: github.event.client_payload.status == 'approved' && steps.implement.outcome == 'failure'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts 2>/dev/null || true
+
+      - name: Verify build
+        id: verify
+        continue-on-error: true
+        run: |
+          if grep -q '"claudopilot:verify"' package.json 2>/dev/null; then
+            echo "Running claudopilot:verify..."
+            npm run claudopilot:verify 2>&1 || echo "CHECKS_FAILED=true" >> "\$GITHUB_ENV"
+          else
+            echo "No claudopilot:verify script — falling back to tsc + lint"
+            FAILED=""
+            if npx tsc --version 2>/dev/null; then
+              npx tsc --noEmit 2>&1 || FAILED="typecheck"
+            fi
+            if grep -q '"lint"' package.json 2>/dev/null; then
+              npm run lint 2>&1 || FAILED="\$FAILED lint"
+            fi
+            [ -n "\$FAILED" ] && echo "CHECKS_FAILED=true" >> "\$GITHUB_ENV"
+          fi
+
+      - name: Fix build errors
+        if: env.CHECKS_FAILED == 'true'
         env:
-          TASK_ID: \${{ github.event.client_payload.task_id }}
+          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
+        run: |
+          echo "Build verification failed. Asking Claude to fix..."
+          claude -p "The build is failing. Run the failing command(s), read the errors, and fix them. Then commit the fix." \\
+            --max-turns 15 \\
+            --allowedTools "Read,Edit,Write,Bash"
+
+      - name: Push commits
+        run: |
+          git checkout -- .github/workflows/ 2>/dev/null || true
+          git checkout -- .claude/commands/ 2>/dev/null || true
+          git add -A
+          git diff --cached --quiet || git commit -m "WIP: uncommitted changes"
+          git push origin "\$BRANCH"
+
+  impl-finalize:
+    if: github.event.client_payload.status == 'approved' && always()
+    name: 🔗 Finalize (PR + Preview)
+    needs: implement
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ env.BRANCH }}
+          fetch-depth: 0
+          token: \${{ secrets.GH_PAT }}
+
+      - name: Check for commits
+        id: check
+        run: |
+          git fetch origin main
+          COMMIT_COUNT=$(git log origin/main..HEAD --oneline 2>/dev/null | wc -l)
+          echo "Commits ahead of main: \$COMMIT_COUNT"
+          if [ "\$COMMIT_COUNT" -gt 0 ]; then
+            echo "has_commits=true" >> "\$GITHUB_OUTPUT"
+          else
+            echo "has_commits=false" >> "\$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR
+        if: steps.check.outputs.has_commits == 'true'
+        id: pr
+        env:
           GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
-          BRANCH="claudopilot/\$TASK_ID"
-          CURRENT=$(git branch --show-current)
-          if [ "\$CURRENT" = "\$BRANCH" ]; then
-            git add -A
-            git diff --cached --quiet || git commit -m "WIP: save progress before turn limit"
-            git push origin "\$BRANCH" 2>/dev/null || git push --set-upstream origin "\$BRANCH"
-            echo "Progress saved to \$BRANCH"
-          fi
-          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
-            -H "Authorization: \$CLICKUP_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"⏸️ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation paused — reached turn limit. Progress has been saved to the branch. Move task back to Approved to continue where it left off."}]}'
-          curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
-            -H "Authorization: \$CLICKUP_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{"status":"blocked"}'
+          TASK_NAME=$(curl -s "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+            -H "Authorization: \$CLICKUP_API_KEY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('name','Implementation'))" 2>/dev/null || echo "Implementation")
+          EXISTING=$(gh pr list --head "\$BRANCH" --json number -q '.[0].number' 2>/dev/null || echo "")
+          if [ -n "\$EXISTING" ]; then
+            PR_URL=$(gh pr view "\$EXISTING" --json url -q '.url')
+          else
+            PR_URL=$(gh pr create \\
+              --title "\$TASK_NAME" \\
+              --body "## ClickUp Task
+          https://app.clickup.com/t/\$TASK_ID
 
-      - name: Wait for Vercel preview deployment
-        if: github.event.client_payload.status == 'approved' && steps.implement.outcome == 'success'
+          ## Changes
+          See task description for full spec." \\
+              --base main \\
+              --head "\$BRANCH" 2>&1) || PR_URL=""
+          fi
+          echo "pr_url=\$PR_URL" >> "\$GITHUB_OUTPUT"
+
+      - name: Wait for Vercel preview
+        if: steps.check.outputs.has_commits == 'true'
         id: vercel
         env:
           GH_TOKEN: \${{ secrets.GH_PAT }}
-          BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}
         run: |
           echo "Waiting for Vercel deployment on \$BRANCH..."
           PREVIEW_URL=""
@@ -242,7 +361,6 @@ jobs:
                   break
           " 2>/dev/null || echo "")
               if [ -n "\$PREVIEW_URL" ]; then
-                echo "Found preview: \$PREVIEW_URL"
                 echo "preview_url=\$PREVIEW_URL" >> "\$GITHUB_OUTPUT"
                 break
               fi
@@ -250,37 +368,35 @@ jobs:
             echo "Attempt \$i/30 — waiting 20s..."
             sleep 20
           done
-          if [ -z "\$PREVIEW_URL" ]; then
-            echo "preview_url=" >> "\$GITHUB_OUTPUT"
-            echo "Timed out waiting for Vercel deployment"
-          fi
 
-      - name: Comment — Implementation complete
-        if: github.event.client_payload.status == 'approved' && steps.implement.outcome == 'success'
+      - name: Post results to ClickUp
+        if: steps.check.outputs.has_commits == 'true'
         env:
-          TASK_ID: \${{ github.event.client_payload.task_id }}
+          PR_URL: \${{ steps.pr.outputs.pr_url }}
           PREVIEW_URL: \${{ steps.vercel.outputs.preview_url }}
+          IMPL_OUTCOME: \${{ needs.implement.outputs.outcome }}
         run: |
-          if [ -n "\$PREVIEW_URL" ]; then
+          if [ "\$IMPL_OUTCOME" = "success" ]; then
+            MSG="Implementation complete."
+            [ -n "\$PR_URL" ] && MSG="\$MSG\\\\n\\\\n🔗 PR: \$PR_URL"
+            [ -n "\$PREVIEW_URL" ] && MSG="\$MSG\\\\n🔗 Preview: \$PREVIEW_URL"
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d "{\\"comment\\":[{\\"text\\":\\"✅ [CLAUDOPILOT] \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"Implementation complete — PR created.\\\\n\\\\n\\"},{\\"text\\":\\"🔗 Preview: \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"\$PREVIEW_URL\\\\n\\"}]}"
+              -d "{\\"comment\\":[{\\"text\\":\\"✅ [CLAUDOPILOT] \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"\$MSG\\"}]}"
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"status":"in review"}'
           else
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment":[{"text":"✅ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation complete — PR created. (Preview deployment not yet available)"}]}'
+              -d '{"comment":[{"text":"⏸️ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation paused — reached turn limit. Progress saved to branch. Move task back to Approved to continue."}]}'
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"status":"blocked"}'
           fi
-
-      - name: Comment — Implementation failed
-        if: github.event.client_payload.status == 'approved' && failure()
-        env:
-          TASK_ID: \${{ github.event.client_payload.task_id }}
-        run: |
-          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
-            -H "Authorization: \$CLICKUP_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"❌ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation failed — check GitHub Actions logs."}]}'
 `;
 }
