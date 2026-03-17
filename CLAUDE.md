@@ -32,3 +32,9 @@ PM tools implement the `PMAdapter` interface in `src/types.ts`. Currently only C
 - All cloud resources created programmatically (ClickUp statuses, Cloudflare Worker, GitHub webhooks)
 - Config stored in `.claudopilot.yaml` in target project
 - Commands are idempotent — running init again updates, doesn't duplicate
+
+## Project Context
+
+Check `context/` for plans, decisions, and institutional knowledge:
+- `context/plans/` — Roadmaps and implementation plans
+- `context/memories/` — Known issues, decisions, and project context that should persist across sessions
