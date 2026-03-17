@@ -93,6 +93,7 @@ your-project/
 
 ```bash
 claudopilot init          # Interactive setup wizard
+claudopilot update        # Re-install generated files from existing config
 claudopilot doctor        # Verify all integrations are connected
 claudopilot status        # Show task pipeline from ClickUp
 ```
@@ -189,6 +190,43 @@ CLOUDFLARE_API_TOKEN=...
 CLOUDFLARE_ACCOUNT_ID=...
 ```
 
+## Roadmap
+
+See [`context/plans/`](context/plans/) for detailed plans. Below is a summary of what's coming.
+
+### Adapter expansion
+
+claudopilot currently has adapters for PM tools (ClickUp, with Jira/Linear planned). Two more adapter interfaces are in progress:
+
+**Deploy adapters** — abstract "deploy this branch, give me a URL" across platforms. Planned: Vercel (git-push driven), Azure + Terraform (explicit apply). See [`context/plans/deploy-and-qa-adapters.md`](context/plans/deploy-and-qa-adapters.md).
+
+**QA adapters** — abstract test execution with capability flags (`unit`, `e2e`, `needsDeployUrl`). Planned: Jest, Playwright, Cypress, pytest. A composite adapter wraps multiple runners so unit tests run immediately and E2E waits for a deploy URL. See [`context/plans/deploy-and-qa-adapters.md`](context/plans/deploy-and-qa-adapters.md).
+
+**PM adapters** — Jira and Linear, implementing the existing `PMAdapter` interface.
+
+### Autonomous intelligence
+
+New standalone flows that generate work, not just execute it:
+
+- **Brainstorm / Ideation** — analyze the codebase across multiple lenses and create ClickUp tasks automatically
+- **Competitor Analysis** — research competitors, surface feature gaps, create prioritized tasks
+- **Security Audit** — system-wide SAST + dependency + secrets scanning, on-demand or scheduled
+
+### Pipeline quality gates
+
+Enhancements to the existing plan → build → review pipeline:
+
+- **QA validation** — verify implementation against spec acceptance criteria before PR creation
+- **Spec self-critique** — reduce red team rounds with an extended-thinking critique pass
+- **Security gate** — block PRs on critical security findings
+
+### Reporting & visibility
+
+- **Changelog generation** — auto-generate release notes from completed ClickUp tasks
+- **Spec-aware PR review** — PR review that understands the original planning spec, not just the diff
+
+See [`context/plans/roadmap.md`](context/plans/roadmap.md) for the full roadmap with priority and effort estimates.
+
 ## Architecture
 
 ```
@@ -197,6 +235,7 @@ src/
 ├── types.ts                  # Config schema, adapter interfaces
 ├── commands/
 │   ├── init.ts               # Interactive setup wizard
+│   ├── update.ts             # Re-install files from existing config
 │   ├── doctor.ts             # Health checks
 │   └── status.ts             # Pipeline visualization
 ├── adapters/

@@ -395,10 +395,11 @@ RULES:
 
 export async function installClaudeMd(
   config: ClaudopilotConfig,
-  targetDir: string = process.cwd()
+  targetDir: string = process.cwd(),
+  { force = false }: { force?: boolean } = {}
 ): Promise<boolean> {
   const claudeMdPath = join(targetDir, "CLAUDE.md");
-  if (existsSync(claudeMdPath)) {
+  if (existsSync(claudeMdPath) && !force) {
     ui.info("CLAUDE.md already exists, skipping");
     return false;
   }

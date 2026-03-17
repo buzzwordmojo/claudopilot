@@ -1,0 +1,79 @@
+import { ui } from "../utils/ui.js";
+import { loadConfig, configExists } from "../utils/config.js";
+import { loadSecrets } from "../utils/secrets.js";
+import {
+  installClaudeCommands,
+  installClaudeMd,
+} from "../installers/claude-commands.js";
+import { installGitHubActions } from "../installers/github-actions.js";
+import { installCodeRabbitConfig } from "../installers/coderabbit.js";
+import { deployCloudflareWorker } from "../installers/cloudflare-worker.js";
+
+interface UpdateOptions {
+  includeWorker?: boolean;
+}
+
+export async function update(options: UpdateOptions): Promise<void> {
+  ui.header("claudopilot update");
+
+  if (!configExists()) {
+    ui.error(
+      "No .claudopilot.yaml found. Run `claudopilot init` first."
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const config = await loadConfig();
+  if (!config) {
+    ui.error("Failed to load config from .claudopilot.yaml");
+    process.exitCode = 1;
+    return;
+  }
+
+  const secrets = await loadSecrets();
+
+  // Re-generate local files
+  ui.step(1, options.includeWorker ? 5 : 4, "Regenerating Claude commands...");
+  await installClaudeCommands(config);
+
+  ui.step(2, options.includeWorker ? 5 : 4, "Regenerating GitHub Actions workflows...");
+  await installGitHubActions(config.github);
+
+  ui.step(3, options.includeWorker ? 5 : 4, "Checking CodeRabbit config...");
+  await installCodeRabbitConfig();
+
+  ui.step(4, options.includeWorker ? 5 : 4, "Checking CLAUDE.md...");
+  await installClaudeMd(config);
+
+  // Optionally redeploy Cloudflare Worker
+  if (options.includeWorker) {
+    ui.step(5, 5, "Redeploying Cloudflare Worker...");
+
+    if (!config.cloudflare) {
+      ui.warn("No Cloudflare config found in .claudopilot.yaml — skipping worker deploy");
+    } else if (!secrets.CLOUDFLARE_API_TOKEN || !secrets.CLOUDFLARE_ACCOUNT_ID) {
+      ui.error("Cloudflare secrets missing from .claudopilot.env — cannot deploy worker");
+    } else if (!secrets.GITHUB_PAT) {
+      ui.error("GitHub PAT missing from .claudopilot.env — cannot deploy worker");
+    } else {
+      try {
+        await deployCloudflareWorker(
+          {
+            ...config.cloudflare,
+            apiToken: secrets.CLOUDFLARE_API_TOKEN,
+            accountId: secrets.CLOUDFLARE_ACCOUNT_ID,
+          },
+          config.github,
+          secrets.GITHUB_PAT,
+          secrets.CLICKUP_API_KEY
+        );
+        ui.success("Cloudflare Worker redeployed");
+      } catch (error) {
+        ui.error(`Cloudflare Worker deploy failed: ${error}`);
+      }
+    }
+  }
+
+  ui.success("Update complete");
+}

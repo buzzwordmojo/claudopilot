@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { init } from "./commands/init.js";
 import { doctor } from "./commands/doctor.js";
 import { status } from "./commands/status.js";
+import { update } from "./commands/update.js";
 
 const program = new Command();
 
@@ -29,5 +30,11 @@ program
   .command("status")
   .description("Show current task pipeline status from your PM tool")
   .action(status);
+
+program
+  .command("update")
+  .description("Re-install generated files from existing config")
+  .option("--include-worker", "Also redeploy the Cloudflare Worker")
+  .action(update);
 
 program.parse();
