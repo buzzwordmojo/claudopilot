@@ -125,6 +125,9 @@ jobs:
     needs: plan-setup
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      failure_reason: \${{ steps.detect.outputs.failure_reason }}
+      reset_info: \${{ steps.detect.outputs.reset_info }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -135,6 +138,8 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Run planning loop
+        id: claude
+        continue-on-error: true
         env:
           CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
         run: |
@@ -143,7 +148,23 @@ jobs:
           claude -p "\$PROMPT" \\
             --max-turns 60 \\
             --verbose \\
-            --allowedTools "Read,Edit,Write,Bash(git *),Bash(curl *),mcp__clickup*"
+            --allowedTools "Read,Edit,Write,Bash(git *),Bash(curl *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect failure reason
+        id: detect
+        if: steps.claude.outcome == 'failure'
+        run: |
+          if grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
+            RESET_INFO=$(grep -oiE "resets [0-9]+[ap]m \\([A-Z]+\\)" /tmp/claude-output.log 2>/dev/null | head -1 || echo "")
+            echo "reset_info=\$RESET_INFO" >> "\$GITHUB_OUTPUT"
+          else
+            echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail if Claude failed
+        if: steps.claude.outcome == 'failure'
+        run: exit 1
 
   plan-complete:
     if: github.event.client_payload.status == 'planning' && always()
@@ -159,6 +180,19 @@ jobs:
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"comment":[{"text":"✅ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning complete — spec ready for review."}]}'
+          elif [ "\${{ needs.plan.outputs.failure_reason }}" = "token_exhausted" ]; then
+            RESET="\${{ needs.plan.outputs.reset_info }}"
+            MSG="Planning paused — Claude token/rate limit reached."
+            [ -n "\$RESET" ] && MSG="\$MSG \$RESET."
+            MSG="\$MSG Move task back to Planning to resume when quota resets."
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d "{\\"comment\\":[{\\"text\\":\\"⏸️ [CLAUDOPILOT] \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"\$MSG\\"}]}"
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"status":"blocked"}'
           else
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
@@ -215,6 +249,8 @@ jobs:
     timeout-minutes: 45
     outputs:
       outcome: \${{ steps.claude.outcome }}
+      failure_reason: \${{ steps.detect.outputs.failure_reason }}
+      reset_info: \${{ steps.detect.outputs.reset_info }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -242,7 +278,19 @@ jobs:
           claude -p "\$PROMPT" \\
             --max-turns 60 \\
             --verbose \\
-            --allowedTools "Read,Edit,Write,Bash,mcp__clickup*"
+            --allowedTools "Read,Edit,Write,Bash,mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect failure reason
+        id: detect
+        if: steps.claude.outcome == 'failure'
+        run: |
+          if grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
+            RESET_INFO=$(grep -oiE "resets [0-9]+[ap]m \\([A-Z]+\\)" /tmp/claude-output.log 2>/dev/null | head -1 || echo "")
+            echo "reset_info=\$RESET_INFO" >> "\$GITHUB_OUTPUT"
+          else
+            echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
+          fi
 
       - name: Install dependencies
         run: npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts 2>/dev/null || true
@@ -375,6 +423,8 @@ jobs:
           PR_URL: \${{ steps.pr.outputs.pr_url }}
           PREVIEW_URL: \${{ steps.vercel.outputs.preview_url }}
           IMPL_OUTCOME: \${{ needs.implement.outputs.outcome }}
+          FAILURE_REASON: \${{ needs.implement.outputs.failure_reason }}
+          RESET_INFO: \${{ needs.implement.outputs.reset_info }}
         run: |
           if [ "\$IMPL_OUTCOME" = "success" ]; then
             MSG="Implementation complete."
@@ -388,6 +438,18 @@ jobs:
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"in review"}'
+          elif [ "\$FAILURE_REASON" = "token_exhausted" ]; then
+            MSG="Implementation paused — Claude token/rate limit reached."
+            [ -n "\$RESET_INFO" ] && MSG="\$MSG \$RESET_INFO."
+            MSG="\$MSG Progress saved to branch. Move task back to Approved to resume when quota resets."
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d "{\\"comment\\":[{\\"text\\":\\"⏸️ [CLAUDOPILOT] \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"\$MSG\\"}]}"
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"status":"blocked"}'
           else
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\

@@ -94,7 +94,8 @@ your-project/
 ```bash
 claudopilot init          # Interactive setup wizard
 claudopilot update        # Re-install generated files from existing config
-claudopilot secrets       # Sync local secrets + Claude credentials to GitHub
+claudopilot secrets       # Sync all local secrets to GitHub
+claudopilot auth          # Push current Claude credentials to GitHub (quick account swap)
 claudopilot doctor        # Verify all integrations are connected
 claudopilot status        # Show task pipeline from ClickUp
 ```
@@ -279,6 +280,7 @@ src/
 │   ├── init.ts               # Interactive setup wizard
 │   ├── update.ts             # Re-install files from existing config
 │   ├── secrets.ts            # Sync secrets to GitHub repo
+│   ├── auth.ts               # Quick Claude credential swap
 │   ├── doctor.ts             # Health checks
 │   └── status.ts             # Pipeline visualization
 ├── adapters/

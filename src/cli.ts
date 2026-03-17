@@ -4,6 +4,7 @@ import { doctor } from "./commands/doctor.js";
 import { status } from "./commands/status.js";
 import { update } from "./commands/update.js";
 import { secrets } from "./commands/secrets.js";
+import { auth } from "./commands/auth.js";
 
 const program = new Command();
 
@@ -43,5 +44,10 @@ program
   .description("Sync local secrets and Claude credentials to GitHub repo secrets")
   .option("--dry-run", "Show what would be synced without making changes")
   .action(secrets);
+
+program
+  .command("auth")
+  .description("Push current Claude credentials to GitHub (quick account swap)")
+  .action(auth);
 
 program.parse();
