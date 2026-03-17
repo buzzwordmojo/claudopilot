@@ -94,6 +94,7 @@ your-project/
 ```bash
 claudopilot init          # Interactive setup wizard
 claudopilot update        # Re-install generated files from existing config
+claudopilot secrets       # Sync local secrets + Claude credentials to GitHub
 claudopilot doctor        # Verify all integrations are connected
 claudopilot status        # Show task pipeline from ClickUp
 ```
@@ -142,9 +143,49 @@ When a task moves to "approved":
 - Node.js 20+
 - A ClickUp workspace
 - A GitHub repo
-- An Anthropic API key
+- Claude authentication (see below)
 - `gh` CLI installed (for PR creation and secret management)
 - Cloudflare account (optional, for webhook bridge)
+
+## Authentication: API key vs Claude subscription
+
+claudopilot uses Claude in two different contexts, and each accepts a different credential:
+
+| Workflow | What it does | Credential | GitHub Secret |
+|----------|-------------|------------|---------------|
+| `claudopilot-worker.yml` (planning + implementation) | Runs `claude` CLI headlessly for architect/red team loops and code generation | Claude subscription OAuth token | `CLAUDE_LONG_LIVED_TOKEN` |
+| `claude.yml` (`@claude` mentions) | Responds to `@claude` in issues/PRs via `claude-code-action` | Anthropic API key | `ANTHROPIC_API_KEY` |
+| `security-review.yml` (PR security review) | Automated security review on PRs via `claude-code-security-review` | Anthropic API key | `ANTHROPIC_API_KEY` |
+
+### Using your Claude subscription (Max plan)
+
+The main planning and implementation workflows run the `claude` CLI directly, which supports the Claude subscription OAuth token. This means you can use your existing Max plan instead of paying per-token via the API.
+
+The `secrets` command handles this automatically — it reads your local Claude credentials and syncs them to GitHub:
+
+```bash
+claudopilot secrets           # sync all secrets to GitHub repo
+claudopilot secrets --dry-run # preview what would be synced
+```
+
+This reads `~/.claude/.credentials.json` (created when you log into Claude Code) and sets it as `CLAUDE_LONG_LIVED_TOKEN` on your GitHub repo, along with all other secrets from `.claudopilot.env`.
+
+**Important:** The OAuth token is tied to your personal Claude subscription and may expire when you re-login to Claude Code. Re-run `claudopilot secrets` to refresh it.
+
+### When you still need an API key
+
+The `@claude` mention action and security review action use Anthropic's official GitHub Actions (`anthropics/claude-code-action`, `anthropics/claude-code-security-review`), which require an `ANTHROPIC_API_KEY`. These are lightweight, low-token-usage workflows.
+
+If you don't need `@claude` mentions or automated security review, you can skip the API key entirely — the core planning and implementation pipeline runs on the subscription token alone.
+
+### GitHub secrets summary
+
+| Secret | Required | Source |
+|--------|----------|--------|
+| `CLAUDE_LONG_LIVED_TOKEN` | Yes | `~/.claude/.credentials.json` |
+| `ANTHROPIC_API_KEY` | Optional | [console.anthropic.com](https://console.anthropic.com) |
+| `CLICKUP_API_KEY` | Yes | ClickUp Settings → Apps → API Token |
+| `GH_PAT` | Yes | GitHub fine-grained token (Contents, Actions, Secrets permissions) |
 
 ## Configuration
 
@@ -236,6 +277,7 @@ src/
 ├── commands/
 │   ├── init.ts               # Interactive setup wizard
 │   ├── update.ts             # Re-install files from existing config
+│   ├── secrets.ts            # Sync secrets to GitHub repo
 │   ├── doctor.ts             # Health checks
 │   └── status.ts             # Pipeline visualization
 ├── adapters/

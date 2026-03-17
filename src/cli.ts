@@ -3,6 +3,7 @@ import { init } from "./commands/init.js";
 import { doctor } from "./commands/doctor.js";
 import { status } from "./commands/status.js";
 import { update } from "./commands/update.js";
+import { secrets } from "./commands/secrets.js";
 
 const program = new Command();
 
@@ -36,5 +37,11 @@ program
   .description("Re-install generated files from existing config")
   .option("--include-worker", "Also redeploy the Cloudflare Worker")
   .action(update);
+
+program
+  .command("secrets")
+  .description("Sync local secrets and Claude credentials to GitHub repo secrets")
+  .option("--dry-run", "Show what would be synced without making changes")
+  .action(secrets);
 
 program.parse();
