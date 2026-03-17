@@ -76,8 +76,11 @@ export interface CloudflareConfig {
   workerUrl?: string;
 }
 
+export type Severity = "critical" | "high" | "medium";
+
 export interface RedTeamConfig {
   maxRounds: number;
+  blockingSeverity: Severity;
   domainLenses: DomainLens[];
   blockedAssignee: "task_creator" | "specific";
   blockedAssigneeUserId?: string;

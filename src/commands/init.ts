@@ -22,6 +22,7 @@ import type {
   CloudflareConfig,
   RedTeamConfig,
   StatusConfig,
+  Severity,
 } from "../types.js";
 import { DEFAULT_STATUSES } from "../types.js";
 import { suggestDomainLenses } from "../utils/analyze.js";
@@ -647,6 +648,16 @@ async function setupRedTeam(anthropicKey: string, clickupApiKey: string, workspa
     default: existing?.maxRounds ?? 5,
   });
 
+  const blockingSeverity = await select<Severity>({
+    message: "Minimum severity that blocks the spec:",
+    choices: [
+      { name: "Critical only (lenient — HIGH findings noted but don't block)", value: "critical" },
+      { name: "High and above (recommended — HIGH and CRITICAL block)", value: "high" },
+      { name: "Medium and above (strict — all findings block)", value: "medium" },
+    ],
+    default: existing?.blockingSeverity ?? "critical",
+  });
+
   // If we have existing lenses, offer to keep them
   let domainLenses: DomainLens[] = [];
 
@@ -836,7 +847,7 @@ async function setupRedTeam(anthropicKey: string, clickupApiKey: string, workspa
     }
   }
 
-  return { maxRounds, domainLenses, blockedAssignee, blockedAssigneeUserId };
+  return { maxRounds, blockingSeverity, domainLenses, blockedAssignee, blockedAssigneeUserId };
 }
 
 // ─── Status Customization ───

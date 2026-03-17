@@ -117,6 +117,7 @@ LOOP:
 ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
 
    Rate every finding as CRITICAL, HIGH, or MEDIUM.
+   Findings rated ${config.redTeam.blockingSeverity.toUpperCase()} or above BLOCK the spec.
    Post a comment to the ClickUp task with findings using
    the rich text format from COMMENT FORMATTING RULES above.
    Use bold for severity labels (CRITICAL:, HIGH:, MEDIUM:)
@@ -144,10 +145,10 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
    If there are no new human comments, proceed to DECISION.
 
 4. DECISION:
-   - If ANY critical findings exist:
+   - If ANY ${config.redTeam.blockingSeverity.toUpperCase()}${config.redTeam.blockingSeverity !== "critical" ? " or above" : ""} findings exist:
      GO TO STEP 1.
 
-   - If no critical findings but you have QUESTIONS for
+   - If no blocking findings but you have QUESTIONS for
      the human (ambiguous requirements, business decisions
      you cannot make):
      a. Post questions as a ClickUp comment prefixed with [BLOCKED].
@@ -171,7 +172,7 @@ ${config.redTeam.blockedAssignee === "specific" && config.redTeam.blockedAssigne
         which will trigger a new run. The new run will read comments
         and the spec file to pick up where you left off.
 
-   - If no critical findings and no questions — PLANNING IS COMPLETE:
+   - If no blocking findings and no questions — PLANNING IS COMPLETE:
 
      a. FINALIZE THE SPEC: Make sure the spec file includes a section
         at the end called "## Implementation Subtasks" that breaks the
@@ -230,16 +231,14 @@ RULES:
   If you mention doing something to ClickUp, you must run the curl.
 - TURN BUDGET: You have a limited number of tool calls. Reserve at
   least 5 turns for finalization (writing description, posting summary,
-  moving status). If you are on round 3+ and have no CRITICAL findings,
+  moving status). If you are on round 3+ and have no blocking findings,
   finalize immediately rather than doing another round.
-- Maximum ${config.redTeam.maxRounds} loop iterations. If still CRITICAL
+- Maximum ${config.redTeam.maxRounds} loop iterations. If still blocked
   after ${config.redTeam.maxRounds}, stop and ask for human guidance.
   Be efficient — combine your analysis.
 - Each red team round must be HARDER than the last.
   Do not repeat the same findings. Go deeper.
-- The red team must explicitly state when HIGH findings
-  are acceptable risks vs must-fix.
-  Only CRITICAL blocks progress.
+- BLOCKING SEVERITY: ${config.redTeam.blockingSeverity.toUpperCase()} and above block progress.${config.redTeam.blockingSeverity === "critical" ? "\n  The red team must explicitly state when HIGH findings\n  are acceptable risks vs must-fix." : ""}
 - Keep a running count: Round N of max ${config.redTeam.maxRounds}.
 - Every comment must start with [ARCHITECT] or [RED TEAM].
 - The spec file should be the FINAL CLEAN RESULT — not an
@@ -286,15 +285,17 @@ Evaluate through these lenses:
 
 ${domainLenses}
 
+Blocking threshold: ${config.redTeam.blockingSeverity.toUpperCase()} and above block the spec.
+
 Output format:
 ### Red Team Report
 **CRITICAL** (must fix):
 - ...
-**HIGH** (should fix):
+**HIGH** (${config.redTeam.blockingSeverity === "critical" ? "should fix" : "must fix"}):
 - ...
-**MEDIUM** (consider):
+**MEDIUM** (${config.redTeam.blockingSeverity === "medium" ? "must fix" : "consider"}):
 - ...
-**Suggested mitigations** for each critical/high item.
+**Suggested mitigations** for each blocking item.
 `;
 }
 

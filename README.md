@@ -212,6 +212,7 @@ github:
   commitEmail: jane@example.com
 redTeam:
   maxRounds: 5
+  blockingSeverity: high  # critical | high | medium
   domainLenses:
     - name: External API Resilience
       description: Ensure graceful handling of third-party API failures
