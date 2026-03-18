@@ -756,6 +756,14 @@ jobs:
     steps:
 ${commonSteps}
 
+      - name: Verify MCP server
+        run: |
+          echo "Testing MCP server startup..."
+          timeout 5 node .claude/mcp-server/index.js < /dev/null 2>&1 || true
+          echo "MCP config:"
+          cat .mcp.json
+          echo "CLICKUP_API_KEY is set: \$( [ -n "\$CLICKUP_API_KEY" ] && echo yes || echo NO )"
+
       - name: Run brainstorm
         id: claude
         continue-on-error: true
@@ -765,7 +773,7 @@ ${commonSteps}
           PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/brainstorm.md)
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
-            --verbose \\
+            --debug \\
             --mcp-config .mcp.json \\
             --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
