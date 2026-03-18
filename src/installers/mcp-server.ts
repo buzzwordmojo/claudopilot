@@ -39,6 +39,13 @@ export async function installMcpServer(
 
   await copyFile(sourcePath, join(mcpServerDir, "index.js"));
 
+  // The bundle is ESM — Node needs "type": "module" to run .js files with import statements
+  await writeFile(
+    join(mcpServerDir, "package.json"),
+    JSON.stringify({ type: "module" }, null, 2) + "\n",
+    "utf-8"
+  );
+
   // Generate .mcp.json at project root
   // CLICKUP_API_KEY is expanded from env at runtime by Claude Code.
   // CLICKUP_WORKSPACE_ID is baked in from config since it's not secret.
