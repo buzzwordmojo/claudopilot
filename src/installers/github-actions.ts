@@ -279,6 +279,7 @@ ${planCompanionCheckouts}
           claude -p "\$PROMPT" \\
             --max-turns 60 \\
             --verbose \\
+            --mcp-config .mcp.json \\
             --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
       - name: Detect failure reason
@@ -417,6 +418,7 @@ ${implCompanionCheckouts}
           claude -p "\$PROMPT" \\
             --max-turns 60 \\
             --verbose \\
+            --mcp-config .mcp.json \\
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
       - name: Detect failure reason
@@ -725,6 +727,7 @@ ${commonSteps}
           claude -p "\$PROMPT" \\
             --max-turns 20 \\
             --verbose \\
+            --mcp-config .mcp.json \\
             --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
 ${detectStep}`);
@@ -763,6 +766,7 @@ ${commonSteps}
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
             --verbose \\
+            --mcp-config .mcp.json \\
             --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
 ${detectStep}
