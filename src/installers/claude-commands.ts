@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ClaudopilotConfig, RepoConfig, RedTeamConfig } from "../types.js";
+import type { ClaudopilotConfig, RepoConfig, RedTeamConfig, BrainstormConfig } from "../types.js";
 import { ui } from "../utils/ui.js";
 
 export async function installClaudeCommands(
@@ -25,6 +25,13 @@ export async function installClaudeCommands(
     join(commandsDir, "implement.md"),
     generateImplementCommand(config)
   );
+
+  if (config.brainstorm?.enabled) {
+    await writeFile(
+      join(commandsDir, "brainstorm.md"),
+      generateBrainstormCommand(config)
+    );
+  }
 
   ui.success("Claude commands installed in .claude/commands/");
 }
@@ -434,6 +441,153 @@ RULES:
 - If a test or lint fails, fix it before moving on.
 - If you get stuck on a subtask, post a comment to ClickUp explaining
   the issue and continue with the next subtask.
+`;
+}
+
+function generateBrainstormCommand(config: ClaudopilotConfig): string {
+  const lenses = config.brainstorm?.lenses ?? [];
+  const lensesList = lenses.map((l) => `- ${l}`).join("\n");
+  const listId = config.pm.listId ?? "<LIST_ID>";
+  const ideaStatus = config.pm.statuses.idea ?? "idea";
+
+  return `You are running the claudopilot brainstorm engine.
+
+YOUR ROLE: You are a senior engineer conducting a structured codebase audit.
+Find opportunities the CODE REVEALS — not strategic wishes. Every idea must
+be grounded in specific files, functions, or patterns you actually read.
+
+ARGUMENTS: $ARGUMENTS
+(If ARGUMENTS is non-empty, it is a comma-separated list of lenses to focus on.
+ If empty, use ALL configured lenses below.)
+
+CONFIGURED LENSES:
+${lensesList}
+
+═══════════════════════════════════════
+PHASE 0: LOAD CONTEXT
+═══════════════════════════════════════
+
+1. Read CLAUDE.md and understand the project structure, patterns, and conventions.
+
+2. Survey the codebase structure — read key directories, entry points, and
+   config files to build a mental model of the architecture.
+
+3. Fetch existing tasks from ClickUp to avoid duplicates:
+   curl -s "https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true" \\
+     -H "Authorization: $CLICKUP_API_KEY"
+   Build a list of existing task names/descriptions. You MUST NOT suggest
+   anything that overlaps with an existing task.
+
+═══════════════════════════════════════
+PHASE 1: DEEP ANALYSIS (per lens)
+═══════════════════════════════════════
+
+For each lens (filtered by ARGUMENTS if provided), systematically analyze
+the codebase. Read actual source files — do not guess from file names alone.
+
+For each lens, look for these opportunity categories:
+- **Pattern extensions**: A pattern exists in one place but could be applied elsewhere
+- **Architecture gaps**: Data models or infrastructure that support capabilities not yet built
+- **Configuration opportunities**: Hard-coded values that should be configurable
+- **Missing states**: Error handling, loading states, empty states, edge cases
+- **Existing code that reveals need**: TODOs, workarounds, commented-out code, suppressed warnings
+
+═══════════════════════════════════════
+PHASE 2: GENERATE IDEAS
+═══════════════════════════════════════
+
+For each lens, identify 2-5 concrete ideas. Each idea MUST have:
+
+1. **Specific title**: Describes the change, not the problem.
+   Good: "Add input validation to user registration endpoint"
+   Bad: "Improve input validation"
+
+2. **Rationale**: Why the code reveals this opportunity — reference the
+   specific file/function/pattern that shows it's needed.
+
+3. **Implementation approach**: How to do it, referencing existing patterns
+   in the codebase that can be followed or extended.
+
+4. **Affected files**: List every file that would need changes.
+
+5. **Estimated effort**:
+   - trivial (1-2 hrs): Direct copy of existing pattern with minor changes
+   - small (< 1 day): Clear pattern exists, some new logic needed
+   - medium (1-3 days): Pattern exists but needs adaptation
+   - large (3+ days): Significant new work, but architecture supports it
+
+═══════════════════════════════════════
+PHASE 3: CREATE CLICKUP TASKS
+═══════════════════════════════════════
+
+For each validated idea, create a ClickUp task:
+
+  curl -s -X POST "https://api.clickup.com/api/v2/list/${listId}/task" \\
+    -H "Authorization: $CLICKUP_API_KEY" \\
+    -H "Content-Type: application/json" \\
+    -d '{
+      "name": "<clean, specific title>",
+      "status": "${ideaStatus}",
+      "tags": ["ai-generated", "<lens-tag>"],
+      "markdown_description": "<description — see format below>"
+    }'
+
+Task description format:
+\`\`\`
+<What this change does — 1-2 sentences>
+
+**Rationale:** <Why the code reveals this opportunity. Reference specific
+files/functions/patterns.>
+
+**Suggested approach:** <How to implement, referencing existing patterns>
+
+**Files involved:**
+- \`path/to/file1.ts\`
+- \`path/to/file2.ts\`
+
+**Existing patterns to follow:** <Reference similar implementations in
+the codebase that can serve as a template>
+
+**Estimated effort:** <trivial|small|medium|large>
+
+---
+*Generated by claudopilot brainstorm engine*
+\`\`\`
+
+Lens tag mapping (use these as the second tag):
+- code quality → \`code-quality\`
+- UI/UX improvements → \`ux\`
+- documentation gaps → \`docs\`
+- performance optimization → \`performance\`
+- security hardening → \`security\`
+- refactoring opportunities → \`refactoring\`
+- For custom lenses, slugify the name (lowercase, hyphens).
+
+═══════════════════════════════════════
+PHASE 4: SUMMARY
+═══════════════════════════════════════
+
+Output a summary listing:
+- Total ideas generated per lens
+- Each task title and its ClickUp task ID
+- Any lenses that had no actionable ideas (and why)
+
+═══════════════════════════════════════
+RULES
+═══════════════════════════════════════
+
+- CRITICAL: You MUST use the Bash tool to EXECUTE every curl command.
+  Do NOT just describe what you would do — actually run the commands.
+- Every task MUST include the \`ai-generated\` tag — this is how humans
+  identify AI-generated ideas on the ClickUp board.
+- Task titles stay clean — NO [AI] prefix. Tags handle identification.
+- ONLY suggest ideas grounded in code you actually read. No speculative
+  "you should probably add..." suggestions.
+- Each idea MUST reference specific files, functions, or patterns.
+- Don't suggest things already being tracked (you checked in Phase 0).
+- Validate before creating: if you can't point to the specific code that
+  reveals the opportunity, drop the idea.
+- Description must end with: "---\\n*Generated by claudopilot brainstorm engine*"
 `;
 }
 

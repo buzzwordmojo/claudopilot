@@ -49,6 +49,17 @@ export async function doctor(): Promise<void> {
     }
   }
 
+  // Check brainstorm command
+  if (config.brainstorm?.enabled) {
+    if (existsSync(join(commandsDir, "brainstorm.md"))) {
+      ui.success("Claude command: brainstorm.md");
+      passed++;
+    } else {
+      ui.error("Missing Claude command: brainstorm.md (brainstorm enabled)");
+      failed++;
+    }
+  }
+
   // Check GitHub Actions
   const workflowsDir = join(process.cwd(), ".github", "workflows");
   const expectedWorkflows = [
@@ -56,6 +67,9 @@ export async function doctor(): Promise<void> {
     "security-review.yml",
     "claudopilot-worker.yml",
   ];
+  if (config.brainstorm?.enabled) {
+    expectedWorkflows.push("claudopilot-brainstorm.yml");
+  }
   for (const wf of expectedWorkflows) {
     if (existsSync(join(workflowsDir, wf))) {
       ui.success(`GitHub Action: ${wf}`);

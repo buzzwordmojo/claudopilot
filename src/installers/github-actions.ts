@@ -25,6 +25,13 @@ export async function installGitHubActions(
     generateWorkerWorkflow(config)
   );
 
+  if (config.brainstorm?.enabled) {
+    await writeFile(
+      join(workflowsDir, "claudopilot-brainstorm.yml"),
+      generateBrainstormWorkflow(config)
+    );
+  }
+
   ui.success("GitHub Actions workflows installed in .github/workflows/");
 }
 
@@ -596,5 +603,65 @@ ${companionPrLogic}
               -H "Content-Type: application/json" \\
               -d '{"status":"blocked"}'
           fi
+`;
+}
+
+function generateBrainstormWorkflow(config: ClaudopilotConfig): string {
+  const companions = getCompanionRepos(config);
+  const hasCompanions = companions.length > 0;
+  const allLenses = config.brainstorm?.lenses ?? [];
+  const defaultLensesStr = allLenses.join(",");
+
+  const companionCheckouts = hasCompanions
+    ? generateCompanionCheckoutSteps(companions, 1)
+    : "";
+
+  const scheduleBlock = config.brainstorm?.schedule
+    ? `\n  schedule:\n    - cron: "${config.brainstorm.schedule}"`
+    : "";
+
+  return `name: Claudopilot Brainstorm
+on:
+  workflow_dispatch:
+    inputs:
+      lenses:
+        description: "Comma-separated lenses (leave empty for all)"
+        required: false${scheduleBlock}
+
+permissions:
+  contents: read
+
+env:
+  CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
+
+jobs:
+  brainstorm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: \${{ secrets.GH_PAT }}
+${companionCheckouts}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Run brainstorm
+        run: |
+          LENSES="\${{ github.event.inputs.lenses }}"
+          [ -z "$LENSES" ] && LENSES="${defaultLensesStr}"
+          export ARGUMENTS="$LENSES"
+          PROMPT=$(ARGUMENTS="$LENSES" CLICKUP_API_KEY="$CLICKUP_API_KEY" envsubst '\\$ARGUMENTS \\$CLICKUP_API_KEY' < .claude/commands/brainstorm.md)
+          claude -p "$PROMPT" \\
+            --max-turns 40 \\
+            --verbose \\
+            --allowedTools "Read,Bash(curl *),Bash(find *),Bash(wc *)" 2>&1 | tee /tmp/claude-output.log
 `;
 }

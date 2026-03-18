@@ -159,6 +159,25 @@ export class ClickUpAdapter implements PMAdapter {
     }));
   }
 
+  async createTask(
+    listId: string,
+    task: { name: string; description?: string; status?: string; tags?: string[] }
+  ): Promise<{ id: string; name: string }> {
+    const data = await this.request<{ id: string; name: string }>(
+      `/list/${listId}/task`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name: task.name,
+          markdown_description: task.description,
+          status: task.status ?? "idea",
+          tags: task.tags ?? [],
+        }),
+      }
+    );
+    return { id: data.id, name: data.name };
+  }
+
   async getUser(): Promise<{ id: number; username: string; email: string }> {
     const data = await this.request<{
       user: { id: number; username: string; email: string };

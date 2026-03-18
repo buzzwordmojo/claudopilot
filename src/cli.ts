@@ -5,6 +5,7 @@ import { status } from "./commands/status.js";
 import { update } from "./commands/update.js";
 import { secrets } from "./commands/secrets.js";
 import { auth } from "./commands/auth.js";
+import { brainstorm } from "./commands/brainstorm.js";
 
 const program = new Command();
 
@@ -49,5 +50,11 @@ program
   .command("auth")
   .description("Push current Claude credentials to GitHub (quick account swap)")
   .action(auth);
+
+program
+  .command("brainstorm")
+  .description("Generate improvement ideas as ClickUp tasks")
+  .option("--lenses <lenses>", "Comma-separated lenses to analyze")
+  .action(brainstorm);
 
 program.parse();

@@ -21,11 +21,12 @@ import type {
   GitHubConfig,
   CloudflareConfig,
   RedTeamConfig,
+  BrainstormConfig,
   RepoConfig,
   StatusConfig,
   Severity,
 } from "../types.js";
-import { DEFAULT_STATUSES } from "../types.js";
+import { DEFAULT_STATUSES, DEFAULT_BRAINSTORM_LENSES } from "../types.js";
 import { suggestDomainLenses } from "../utils/analyze.js";
 import { loadSecrets, saveSecrets, maskKey } from "../utils/secrets.js";
 
@@ -104,7 +105,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 8 : 9;
+  const totalSteps = options.skipCloud ? 9 : 10;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -356,6 +357,12 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
+  // ─── Brainstorm / Ideation Engine ───
+  step++;
+  ui.step(step, totalSteps, "Brainstorm / ideation engine...");
+
+  const brainstormConfig = await setupBrainstorm(existing?.brainstorm);
+
   // ─── Install files ───
   step++;
   ui.step(step, totalSteps, "Installing project files...");
@@ -374,6 +381,7 @@ export async function init(options: InitOptions): Promise<void> {
       ? { workerName: cloudflareConfig.workerName, workerUrl }
       : undefined,
     redTeam: redTeamConfig,
+    brainstorm: brainstormConfig,
   };
 
   await saveConfig(config);
@@ -956,6 +964,76 @@ async function setupRedTeam(anthropicKey: string, clickupApiKey: string, workspa
   }
 
   return { maxRounds, blockingSeverity, domainLenses, blockedAssignee, blockedAssigneeUserId };
+}
+
+// ─── Brainstorm Setup ───
+
+async function setupBrainstorm(existing?: BrainstormConfig): Promise<BrainstormConfig | undefined> {
+  const enable = await confirm({
+    message: "Enable brainstorm/ideation engine? (AI generates improvement ideas as ClickUp tasks)",
+    default: existing?.enabled ?? true,
+  });
+
+  if (!enable) {
+    return undefined;
+  }
+
+  const useSchedule = await confirm({
+    message: "Run brainstorm on a schedule?",
+    default: !!existing?.schedule,
+  });
+
+  let schedule: string | undefined;
+  if (useSchedule) {
+    schedule = await input({
+      message: "Cron expression (e.g., '0 9 * * 1' for Monday 9am UTC):",
+      default: existing?.schedule ?? "0 9 * * 1",
+    });
+  }
+
+  // Lens selection
+  const defaultLenses = existing?.lenses ?? DEFAULT_BRAINSTORM_LENSES;
+  ui.info("Default brainstorm lenses:");
+  for (const lens of defaultLenses) {
+    console.log(`    • ${lens}`);
+  }
+
+  const customizeLenses = await confirm({
+    message: "Customize lenses?",
+    default: false,
+  });
+
+  let lenses: string[];
+  if (customizeLenses) {
+    const selected = await checkbox({
+      message: "Select lenses to enable:",
+      choices: DEFAULT_BRAINSTORM_LENSES.map((l) => ({
+        name: l,
+        value: l,
+        checked: defaultLenses.includes(l),
+      })),
+    });
+
+    const addCustom = await confirm({
+      message: "Add custom lenses?",
+      default: false,
+    });
+
+    if (addCustom) {
+      let addMore = true;
+      while (addMore) {
+        const lens = await input({ message: "Lens name:" });
+        selected.push(lens);
+        addMore = await confirm({ message: "Add another?", default: false });
+      }
+    }
+
+    lenses = selected;
+  } else {
+    lenses = defaultLenses;
+  }
+
+  return { enabled: true, schedule, lenses };
 }
 
 // ─── Status Customization ───

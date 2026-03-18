@@ -5,6 +5,7 @@ export interface ClaudopilotConfig {
   github: GitHubConfig;
   cloudflare?: CloudflareConfig;
   redTeam: RedTeamConfig;
+  brainstorm?: BrainstormConfig;
 }
 
 export interface ProjectConfig {
@@ -94,6 +95,21 @@ export interface DomainLens {
   checks: string[];
 }
 
+export interface BrainstormConfig {
+  enabled: boolean;
+  schedule?: string;           // cron expression, e.g. "0 9 * * 1" (Monday 9am)
+  lenses: string[];            // e.g. ["code quality", "UX", "performance", "security", "docs", "refactoring"]
+}
+
+export const DEFAULT_BRAINSTORM_LENSES = [
+  "code quality",
+  "UI/UX improvements",
+  "documentation gaps",
+  "performance optimization",
+  "security hardening",
+  "refactoring opportunities",
+];
+
 export interface PMAdapter {
   name: string;
   validateCredentials(): Promise<boolean>;
@@ -113,4 +129,8 @@ export interface PMAdapter {
     workspaceId: string,
     webhookUrl: string
   ): Promise<{ id: string }>;
+  createTask?(
+    listId: string,
+    task: { name: string; description?: string; status?: string; tags?: string[] }
+  ): Promise<{ id: string; name: string }>;
 }
