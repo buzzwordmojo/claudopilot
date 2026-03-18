@@ -594,6 +594,12 @@ Output a summary listing:
 RULES
 ═══════════════════════════════════════
 
+- TURN BUDGET: You have a limited number of tool calls. Track how many turns
+  you have used. When you have 2 turns remaining, STOP what you are doing and
+  immediately write /tmp/brainstorm-state.md with everything you have learned
+  so far — completed lenses, draft ideas, files read, current analysis state.
+  This is more important than creating ClickUp tasks. Tasks can be created in
+  the next round; lost analysis cannot be recovered.
 - CRITICAL: Use the MCP tools (clickup_create_task, clickup_get_list_tasks)
   for all ClickUp interactions. Do NOT use curl.
 - Every task MUST include the \`ai-generated\` tag — this is how humans
