@@ -725,7 +725,7 @@ ${commonSteps}
           claude -p "\$PROMPT" \\
             --max-turns 20 \\
             --verbose \\
-            --allowedTools "Read,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
 ${detectStep}`);
   }
@@ -763,7 +763,7 @@ ${commonSteps}
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
             --verbose \\
-            --allowedTools "Read,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
 ${detectStep}
 ${continuationRounds.join("\n")}
