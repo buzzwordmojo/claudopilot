@@ -8,6 +8,7 @@ import {
 import { installGitHubActions } from "../installers/github-actions.js";
 import { installCodeRabbitConfig } from "../installers/coderabbit.js";
 import { deployCloudflareWorker } from "../installers/cloudflare-worker.js";
+import { installMcpServer } from "../installers/mcp-server.js";
 
 interface UpdateOptions {
   includeWorker?: boolean;
@@ -32,23 +33,27 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 
   const secrets = await loadSecrets();
+  const totalSteps = options.includeWorker ? 6 : 5;
 
   // Re-generate local files
-  ui.step(1, options.includeWorker ? 5 : 4, "Regenerating Claude commands...");
+  ui.step(1, totalSteps, "Regenerating Claude commands...");
   await installClaudeCommands(config);
 
-  ui.step(2, options.includeWorker ? 5 : 4, "Regenerating GitHub Actions workflows...");
+  ui.step(2, totalSteps, "Regenerating GitHub Actions workflows...");
   await installGitHubActions(config);
 
-  ui.step(3, options.includeWorker ? 5 : 4, "Checking CodeRabbit config...");
+  ui.step(3, totalSteps, "Checking CodeRabbit config...");
   await installCodeRabbitConfig();
 
-  ui.step(4, options.includeWorker ? 5 : 4, "Checking CLAUDE.md...");
+  ui.step(4, totalSteps, "Checking CLAUDE.md...");
   await installClaudeMd(config);
+
+  ui.step(5, totalSteps, "Updating MCP server...");
+  await installMcpServer(config);
 
   // Optionally redeploy Cloudflare Worker
   if (options.includeWorker) {
-    ui.step(5, 5, "Redeploying Cloudflare Worker...");
+    ui.step(6, 6, "Redeploying Cloudflare Worker...");
 
     if (!config.cloudflare) {
       ui.warn("No Cloudflare config found in .claudopilot.yaml — skipping worker deploy");

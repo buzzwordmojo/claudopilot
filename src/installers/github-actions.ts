@@ -243,7 +243,7 @@ jobs:
           curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
             -H "Authorization: \$CLICKUP_API_KEY" \\
             -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"🤖 [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning started — architect/red team loop running..."}]}'
+            -d '{"comment_text":"🤖 [CLAUDOPILOT] Planning started — architect/red team loop running..."}'
 
   plan:
     if: github.event.client_payload.status == 'planning'
@@ -274,11 +274,12 @@ ${planCompanionCheckouts}
         continue-on-error: true
         run: |
           export ARGUMENTS="\$TASK_ID"
-          PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '\$ARGUMENTS \$CLICKUP_API_KEY' < .claude/commands/plan-feature.md)
+          # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
+          PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/plan-feature.md)
           claude -p "\$PROMPT" \\
             --max-turns 60 \\
             --verbose \\
-            --allowedTools "Read,Edit,Write,Bash(git *),Bash(curl *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
       - name: Detect failure reason
         id: detect
@@ -309,16 +310,17 @@ ${planCompanionCheckouts}
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment":[{"text":"✅ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning complete — spec ready for review."}]}'
+              -d '{"comment_text":"✅ [CLAUDOPILOT] Planning complete — spec ready for review."}'
           elif [ "\${{ needs.plan.outputs.failure_reason }}" = "token_exhausted" ]; then
             RESET="\${{ needs.plan.outputs.reset_info }}"
             MSG="Planning paused — Claude token/rate limit reached."
             [ -n "\$RESET" ] && MSG="\$MSG \$RESET."
             MSG="\$MSG Move task back to Planning to resume when quota resets."
+            ESCAPED_MSG=$(echo "\$MSG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))')
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d "{\\"comment\\":[{\\"text\\":\\"⏸️ [CLAUDOPILOT] \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"\$MSG\\"}]}"
+              -d "{\\"comment_text\\":\\"⏸️ [CLAUDOPILOT] \$MSG\\"}"
             curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
@@ -327,7 +329,7 @@ ${planCompanionCheckouts}
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment":[{"text":"❌ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Planning failed — check GitHub Actions logs."}]}'
+              -d '{"comment_text":"❌ [CLAUDOPILOT] Planning failed — check GitHub Actions logs."}'
           fi
 
   # ═══════════════════════════════════════════
@@ -354,7 +356,7 @@ ${planCompanionCheckouts}
           curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
             -H "Authorization: \$CLICKUP_API_KEY" \\
             -H "Content-Type: application/json" \\
-            -d '{"comment":[{"text":"🤖 [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation started — writing tests and code..."}]}'
+            -d '{"comment_text":"🤖 [CLAUDOPILOT] Implementation started — writing tests and code..."}'
 
       - name: Create or resume branch
         run: |
@@ -410,7 +412,8 @@ ${implCompanionCheckouts}
           GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
           export ARGUMENTS="\$TASK_ID"
-          PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '\$ARGUMENTS \$CLICKUP_API_KEY' < .claude/commands/implement.md)
+          # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
+          PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/implement.md)
           claude -p "\$PROMPT" \\
             --max-turns 60 \\
             --verbose \\
@@ -576,7 +579,7 @@ ${companionPrLogic}
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d "{\\"comment\\":[{\\"text\\":\\"✅ [CLAUDOPILOT] \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"\$MSG\\"}]}"
+              -d "{\\"comment_text\\":\\"✅ [CLAUDOPILOT] \$MSG\\"}"
             curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
@@ -588,7 +591,7 @@ ${companionPrLogic}
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d "{\\"comment\\":[{\\"text\\":\\"⏸️ [CLAUDOPILOT] \\",\\"attributes\\":{\\"bold\\":true}},{\\"text\\":\\"\$MSG\\"}]}"
+              -d "{\\"comment_text\\":\\"⏸️ [CLAUDOPILOT] \$MSG\\"}"
             curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
@@ -597,7 +600,7 @@ ${companionPrLogic}
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment":[{"text":"⏸️ [CLAUDOPILOT] ","attributes":{"bold":true}},{"text":"Implementation paused — reached turn limit. Progress saved to branch. Move task back to Approved to continue."}]}'
+              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Implementation paused — reached turn limit. Progress saved to branch. Move task back to Approved to continue."}'
             curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
@@ -606,19 +609,126 @@ ${companionPrLogic}
 `;
 }
 
-function generateBrainstormWorkflow(config: ClaudopilotConfig): string {
+function generateBrainstormCommonSteps(config: ClaudopilotConfig): string {
   const companions = getCompanionRepos(config);
   const hasCompanions = companions.length > 0;
-  const allLenses = config.brainstorm?.lenses ?? [];
-  const defaultLensesStr = allLenses.join(",");
 
   const companionCheckouts = hasCompanions
     ? generateCompanionCheckoutSteps(companions, 1)
     : "";
 
+  return `      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: \${{ secrets.GH_PAT }}
+${companionCheckouts}
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json`;
+}
+
+function generateBrainstormDetectStep(): string {
+  return `      - name: Detect outcome
+        id: detect
+        if: always()
+        run: |
+          if [ "\${{ steps.claude.outcome }}" = "success" ]; then
+            # Claude finished naturally — check if all lenses are done
+            if [ -f /tmp/brainstorm-state.md ]; then
+              if grep -q "## Remaining Lenses" /tmp/brainstorm-state.md 2>/dev/null && \\
+                 grep -A100 "## Remaining Lenses" /tmp/brainstorm-state.md | grep -q "^-"; then
+                echo "needs_continuation=true" >> "\$GITHUB_OUTPUT"
+              else
+                echo "needs_continuation=false" >> "\$GITHUB_OUTPUT"
+              fi
+            else
+              echo "needs_continuation=false" >> "\$GITHUB_OUTPUT"
+            fi
+          else
+            # Claude was interrupted (turn limit, rate limit, or error)
+            if [ -f /tmp/brainstorm-state.md ]; then
+              echo "needs_continuation=true" >> "\$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "\$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Upload brainstorm state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brainstorm-state
+          path: /tmp/brainstorm-state.md
+          if-no-files-found: ignore
+          overwrite: true`;
+}
+
+function generateBrainstormWorkflow(config: ClaudopilotConfig): string {
+  const allLenses = config.brainstorm?.lenses ?? [];
+  const defaultLensesStr = allLenses.join(",");
+
   const scheduleBlock = config.brainstorm?.schedule
     ? `\n  schedule:\n    - cron: "${config.brainstorm.schedule}"`
     : "";
+
+  const commonSteps = generateBrainstormCommonSteps(config);
+  const detectStep = generateBrainstormDetectStep();
+
+  // Generate continuation round jobs (rounds 2-5)
+  const continuationRounds: string[] = [];
+  for (let round = 2; round <= 5; round++) {
+    const prevJob = round === 2 ? "brainstorm" : `brainstorm-round-${round - 1}`;
+
+    continuationRounds.push(`
+  approve-round-${round}:
+    needs: ${prevJob}
+    if: needs.${prevJob}.outputs.needs_continuation == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    environment: brainstorm-continue
+    steps:
+      - run: echo "Round ${round} approved — continuing brainstorm"
+
+  auto-approve-round-${round}:
+    needs: ${prevJob}
+    if: needs.${prevJob}.outputs.needs_continuation == 'true' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Scheduled run — auto-continuing round ${round}"
+
+  brainstorm-round-${round}:
+    needs: [approve-round-${round}, auto-approve-round-${round}]
+    if: always() && (needs.approve-round-${round}.result == 'success' || needs.auto-approve-round-${round}.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      needs_continuation: \${{ steps.detect.outputs.needs_continuation }}
+    steps:
+${commonSteps}
+
+      - name: Download brainstorm state
+        uses: actions/download-artifact@v4
+        with:
+          name: brainstorm-state
+          path: /tmp
+
+      - name: Run brainstorm (round ${round})
+        id: claude
+        continue-on-error: true
+        run: |
+          LENSES="\${{ github.event.inputs.lenses }}"
+          [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
+          PROMPT=$(sed "s/\\$ARGUMENTS/\$LENSES/g" .claude/commands/brainstorm.md)
+          claude -p "\$PROMPT" \\
+            --max-turns 20 \\
+            --verbose \\
+            --allowedTools "Read,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+
+${detectStep}`);
+  }
 
   return `name: Claudopilot Brainstorm
 on:
@@ -638,30 +748,24 @@ jobs:
   brainstorm:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      needs_continuation: \${{ steps.detect.outputs.needs_continuation }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          token: \${{ secrets.GH_PAT }}
-${companionCheckouts}
-
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Setup Claude credentials
-        run: |
-          mkdir -p ~/.claude
-          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+${commonSteps}
 
       - name: Run brainstorm
+        id: claude
+        continue-on-error: true
         run: |
           LENSES="\${{ github.event.inputs.lenses }}"
-          [ -z "$LENSES" ] && LENSES="${defaultLensesStr}"
-          export ARGUMENTS="$LENSES"
-          PROMPT=$(ARGUMENTS="$LENSES" CLICKUP_API_KEY="$CLICKUP_API_KEY" envsubst '\\$ARGUMENTS \\$CLICKUP_API_KEY' < .claude/commands/brainstorm.md)
-          claude -p "$PROMPT" \\
+          [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
+          PROMPT=$(sed "s/\\$ARGUMENTS/\$LENSES/g" .claude/commands/brainstorm.md)
+          claude -p "\$PROMPT" \\
             --max-turns 40 \\
             --verbose \\
-            --allowedTools "Read,Bash(curl *),Bash(find *),Bash(wc *)" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+
+${detectStep}
+${continuationRounds.join("\n")}
 `;
 }

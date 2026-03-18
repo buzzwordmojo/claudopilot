@@ -1,0 +1,20 @@
+{
+  "name": "@buzzwordmojo/claudopilot-clickup-mcp",
+  "version": "0.1.0",
+  "description": "ClickUp MCP server for claudopilot workflows",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --target node20 --outDir dist --clean",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.5.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

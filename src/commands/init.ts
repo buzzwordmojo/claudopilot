@@ -14,6 +14,7 @@ import {
 import { installGitHubActions } from "../installers/github-actions.js";
 import { deployCloudflareWorker } from "../installers/cloudflare-worker.js";
 import { installCodeRabbitConfig } from "../installers/coderabbit.js";
+import { installMcpServer } from "../installers/mcp-server.js";
 import type {
   ClaudopilotConfig,
   DomainLens,
@@ -408,10 +409,11 @@ export async function init(options: InitOptions): Promise<void> {
   await installClaudeCommands(config);
   await installGitHubActions(config);
   await installCodeRabbitConfig();
+  await installMcpServer(config);
 
-  // ─── Step 8: MCP setup instructions ───
+  // ─── Step 8: Set GitHub repo secrets ───
   step++;
-  ui.step(step, totalSteps, "Claude Code MCP setup...");
+  ui.step(step, totalSteps, "Setting GitHub secrets...");
 
   // ─── Set GitHub repo secret ───
   const setSecret = await confirm({
@@ -456,20 +458,37 @@ export async function init(options: InitOptions): Promise<void> {
       const stderr = error?.stderr?.toString?.() || error?.message || String(error);
       clickupSpinner.fail(`  Could not set CLICKUP_API_KEY: ${stderr.trim()}`);
     }
+
+    // Create brainstorm-continue environment for approval gates
+    if (config.brainstorm?.enabled) {
+      const envSpinner = ui.spinner(`Creating brainstorm-continue environment on ${repoSlug}...`);
+      try {
+        execSync(
+          `gh api repos/${repoSlug}/environments/brainstorm-continue --method PUT`,
+          {
+            env: { ...process.env, GH_TOKEN: githubConfig.pat },
+            stdio: ["pipe", "pipe", "pipe"],
+          }
+        );
+        envSpinner.succeed(`  brainstorm-continue environment created on ${repoSlug}`);
+        ui.hint([
+          "To enable approval gates: go to GitHub repo → Settings → Environments →",
+          "brainstorm-continue → add yourself as a required reviewer.",
+        ]);
+      } catch (error: any) {
+        const stderr = error?.stderr?.toString?.() || error?.message || String(error);
+        envSpinner.fail(`  Could not create environment: ${stderr.trim()}`);
+        ui.warn("You can create the 'brainstorm-continue' environment manually in GitHub repo settings.");
+      }
+    }
   }
 
   // ─── Post-init: remaining manual steps ───
-  ui.header("Almost done — a few manual steps remaining");
+  ui.header("Almost done!");
 
-  ui.info("1. Connect Claude Code to ClickUp via MCP:");
-  ui.blank();
-  console.log(
-    "    claude mcp add --transport http clickup https://mcp.clickup.com/mcp"
-  );
-  ui.blank();
-  ui.info("   Then run /mcp in a Claude Code session to authorize.");
+  ui.info("MCP server installed — Claude Code will auto-discover ClickUp tools from .mcp.json.");
 
-  ui.info("2. Verify everything is connected:");
+  ui.info("Verify everything is connected:");
   ui.blank();
   console.log("    claudopilot doctor");
 

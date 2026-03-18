@@ -60,6 +60,26 @@ export async function doctor(): Promise<void> {
     }
   }
 
+  // Check MCP server
+  const mcpJsonPath = join(process.cwd(), ".mcp.json");
+  const mcpServerPath = join(process.cwd(), ".claude", "mcp-server", "index.js");
+
+  if (existsSync(mcpJsonPath)) {
+    ui.success("MCP config: .mcp.json");
+    passed++;
+  } else {
+    ui.error("Missing .mcp.json (run 'claudopilot update' to generate)");
+    failed++;
+  }
+
+  if (existsSync(mcpServerPath)) {
+    ui.success("MCP server: .claude/mcp-server/index.js");
+    passed++;
+  } else {
+    ui.error("Missing MCP server bundle (run 'claudopilot update' to install)");
+    failed++;
+  }
+
   // Check GitHub Actions
   const workflowsDir = join(process.cwd(), ".github", "workflows");
   const expectedWorkflows = [

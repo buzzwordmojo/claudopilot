@@ -85,10 +85,7 @@ function generatePlanFeatureCommand(config: ClaudopilotConfig): string {
 
   return `You are working on ClickUp task: $ARGUMENTS
 ${multiRepoContext}
-First, fetch the task details from ClickUp using:
-  curl -s "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-    -H "Authorization: $CLICKUP_API_KEY"
-
+First, fetch the task details using clickup_get_task with task_id "$ARGUMENTS".
 Read the task name, description, and any comments to understand
 what needs to be built. Also note the creator.id from the response —
 you may need it later if the task gets blocked.
@@ -105,24 +102,14 @@ This preserves what the human actually asked for.
 
 Check if a specs/[feature-name].md file already exists for this task.
 If it does, this is a CONTINUATION of a previous planning session.
-Read the existing spec and all ClickUp comments to understand what
+Read the existing spec and fetch ClickUp comments using
+clickup_get_task_comments with task_id "$ARGUMENTS" to understand what
 questions were asked, what answers were given, and resume from there.
 
-Post a comment on the task to confirm you've started:
-  curl -s -X POST "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment" \\
-    -H "Authorization: $CLICKUP_API_KEY" \\
-    -H "Content-Type: application/json" \\
-    -d '{"comment":[{"text":"🏗️ [ARCHITECT] ","attributes":{"bold":true}},{"text":"Reading task and starting planning..."}]}'
-
-COMMENT FORMATTING RULES:
-- Use ClickUp rich text format: {"comment": [{"text":"...","attributes":{}},...]}
-- ARCHITECT comments: header = {"text":"🏗️ [ARCHITECT] <title>\\n","attributes":{"bold":true}}
-- RED TEAM comments: header = {"text":"🔴 [RED TEAM] <title>\\n","attributes":{"bold":true}}
-- BLOCKED comments: header = {"text":"❓ [BLOCKED] <title>\\n","attributes":{"bold":true}}
-- For severity labels use bold: {"text":"CRITICAL: ","attributes":{"bold":true}}
-- For file paths use code: {"text":"path/to/file.ts","attributes":{"code-inline":true}}
-- Plain body text: {"text":"description here\\n","attributes":{}}
-- Keep comments concise — details in the spec file, summaries in comments.
+Post a comment on the task to confirm you've started using
+clickup_create_task_comment with:
+  task_id: "$ARGUMENTS"
+  comment_text: "🏗️ [ARCHITECT] Reading task and starting planning..."
 
 You will alternate between two roles: ARCHITECT and RED TEAM.
 These are adversarial. The architect wants to ship. The red
@@ -135,7 +122,9 @@ LOOP:
    CLAUDE.md and any architecture docs for context.
    Save spec to specs/[feature-name].md
    Post a comment to the ClickUp task summarizing the spec using
-   the rich text format from COMMENT FORMATTING RULES above.
+   clickup_create_task_comment with:
+     task_id: "$ARGUMENTS"
+     comment_text: "🏗️ [ARCHITECT] <summary of spec>"
 
 2. RED TEAM: Attack the spec. Be brutal. Evaluate through
    these lenses:
@@ -165,15 +154,14 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
    Rate every finding as CRITICAL, HIGH, or MEDIUM.
    Findings rated ${severity.toUpperCase()} or above BLOCK the spec.
    Post a comment to the ClickUp task with findings using
-   the rich text format from COMMENT FORMATTING RULES above.
-   Use bold for severity labels (CRITICAL:, HIGH:, MEDIUM:)
-   and code-inline for file paths.
+   clickup_create_task_comment with:
+     task_id: "$ARGUMENTS"
+     comment_text: "🔴 [RED TEAM] <findings with severity ratings>"
 
 3. CHECK FOR NEW STAKEHOLDER INPUT:
    Before making a decision, re-fetch task comments to check for
-   new human input added while you were working:
-   curl -s "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment" \\
-     -H "Authorization: $CLICKUP_API_KEY"
+   new human input added while you were working using
+   clickup_get_task_comments with task_id "$ARGUMENTS".
 
    Compare against comments you've already seen. Track the count
    of comments you've read so far — any new ones are new input.
@@ -183,8 +171,8 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
 
    If there ARE new human comments:
    - Read them carefully as additional requirements or clarifications
-   - Post an acknowledgment using rich text format with 🏗️ [ARCHITECT] header,
-     noting what new input was received and that it will be incorporated.
+   - Post an acknowledgment using clickup_create_task_comment with
+     task_id "$ARGUMENTS" and comment_text noting the new input.
    - GO TO STEP 1 to revise the spec with the new input
      (this does NOT count against the max rounds limit)
 
@@ -197,23 +185,18 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
    - If no blocking findings but you have QUESTIONS for
      the human (ambiguous requirements, business decisions
      you cannot make):
-     a. Post questions as a ClickUp comment prefixed with [BLOCKED].
-     b. Move the task to "blocked":
-        curl -s -X PUT "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-          -H "Authorization: $CLICKUP_API_KEY" \\
-          -H "Content-Type: application/json" \\
-          -d '{"status":"blocked"}'
-     c. Assign it so the right person knows to respond:
+     a. Post questions as a ClickUp comment using
+        clickup_create_task_comment with task_id "$ARGUMENTS"
+        and comment_text prefixed with "❓ [BLOCKED]".
+     b. Move the task to "blocked" using clickup_update_task with:
+          task_id: "$ARGUMENTS"
+          status: "blocked"
+     c. Assign it so the right person knows to respond using
+        clickup_update_task with:
+          task_id: "$ARGUMENTS"
 ${config.redTeam.blockedAssignee === "specific" && config.redTeam.blockedAssigneeUserId
-  ? `        curl -s -X PUT "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-          -H "Authorization: $CLICKUP_API_KEY" \\
-          -H "Content-Type: application/json" \\
-          -d '{"assignees":{"add":[${config.redTeam.blockedAssigneeUserId}]}}'`
-  : `        Use the creator.id from the task details:
-        curl -s -X PUT "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-          -H "Authorization: $CLICKUP_API_KEY" \\
-          -H "Content-Type: application/json" \\
-          -d '{"assignees":{"add":[<creator_id>]}}'`}
+  ? `          assignees: { "add": [${config.redTeam.blockedAssigneeUserId}] }`
+  : `          assignees: { "add": [<creator_id from task details>] }`}
      d. STOP. A human will answer and move the task back to "planning",
         which will trigger a new run. The new run will read comments
         and the spec file to pick up where you left off.
@@ -229,52 +212,42 @@ ${config.redTeam.blockedAssignee === "specific" && config.redTeam.blockedAssigne
         - Include: context, files, approach, acceptance criteria, edge cases
 
      b. SET TASK DESCRIPTION: Read the spec file and write it to the
-        ClickUp task description using markdown_description.
-        Use a bash script to properly JSON-escape the content:
-        SPEC=$(cat specs/[feature-name].md)
-        ESCAPED=$(echo "$SPEC" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
-        curl -s -X PUT "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-          -H "Authorization: $CLICKUP_API_KEY" \\
-          -H "Content-Type: application/json" \\
-          -d "{\\"markdown_description\\": $ESCAPED}"
+        ClickUp task description using clickup_update_task with:
+          task_id: "$ARGUMENTS"
+          markdown_description: <contents of specs/[feature-name].md>
 
      c. CREATE SUBTASKS if the work involves multiple files or
         distinct concerns (skip for simple single-file fixes).
-        First, get the list ID from the parent task's list.id field.
-        Then for each subtask, create it with a COMPLETE spec as its
-        description — not just a title. Each subtask description should
-        include:
+        Get the list ID from the parent task's list.id field.
+        For each subtask, use clickup_create_task with:
+          list_id: <list_id>
+          name: "<subtask title>"
+          parent: "$ARGUMENTS"
+          status: "idea"
+          markdown_description: "<full subtask spec>"
+
+        Each subtask description should include:
         - Context: why this change is needed (reference the parent spec)
         - What to change: specific files, functions, components
         - How to change it: the approach, with code-level detail
         - Acceptance criteria: what "done" looks like
         - Edge cases or risks the red team identified for this piece
 
-        curl -s -X POST "https://api.clickup.com/api/v2/list/<list_id>/task" \\
-          -H "Authorization: $CLICKUP_API_KEY" \\
-          -H "Content-Type: application/json" \\
-          -d '{"name":"<subtask title>","parent":"$ARGUMENTS","status":"idea","markdown_description":"<full subtask spec>"}'
-
         The implementation agent will use each subtask's description
         as its working spec, so make them self-contained enough to
         implement without re-reading the entire parent spec.
 
-     d. POST a final summary comment to ClickUp.
+     d. POST a final summary comment using clickup_create_task_comment.
 
-     e. MOVE the task to "awaiting approval":
-        curl -s -X PUT "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-          -H "Authorization: $CLICKUP_API_KEY" \\
-          -H "Content-Type: application/json" \\
-          -d '{"status":"awaiting approval"}'
+     e. MOVE the task to "awaiting approval" using clickup_update_task with:
+          task_id: "$ARGUMENTS"
+          status: "awaiting approval"
 
      f. STOP.
 
 RULES:
-- CRITICAL: You MUST use the Bash tool to EXECUTE every curl command
-  in this prompt. Do NOT just describe what you would do — actually
-  run the commands. This includes: fetching the task, posting comments,
-  updating the task description, and changing status.
-  If you mention doing something to ClickUp, you must run the curl.
+- CRITICAL: You MUST use the MCP tools (clickup_get_task, clickup_update_task,
+  clickup_create_task_comment, etc.) to interact with ClickUp. Do NOT use curl.
 - TURN BUDGET: You have a limited number of tool calls. Reserve at
   least 5 turns for finalization (writing description, posting summary,
   moving status). If you are on round 3+ and have no blocking findings,
@@ -354,29 +327,25 @@ ${multiRepoContext}
 
 SETUP:
 
-1. Fetch the task details from ClickUp:
-   curl -s "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-     -H "Authorization: $CLICKUP_API_KEY"
+1. Fetch the task details using clickup_get_task with task_id "$ARGUMENTS".
    Read the task name, description (the spec), and subtasks.
 
-2. Move the task to "building":
-   curl -s -X PUT "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-     -H "Authorization: $CLICKUP_API_KEY" \\
-     -H "Content-Type: application/json" \\
-     -d '{"status":"building"}'
+2. Move the task to "building" using clickup_update_task with:
+     task_id: "$ARGUMENTS"
+     status: "building"
 
-3. Post a comment confirming you've started:
-   curl -s -X POST "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment" \\
-     -H "Authorization: $CLICKUP_API_KEY" \\
-     -H "Content-Type: application/json" \\
-     -d '{"comment":[{"text":"🔨 [IMPLEMENT] ","attributes":{"bold":true}},{"text":"Starting implementation. Reading spec and creating branch..."}]}'
+3. Post a comment confirming you've started using
+   clickup_create_task_comment with:
+     task_id: "$ARGUMENTS"
+     comment_text: "🔨 [IMPLEMENT] Starting implementation. Reading spec and creating branch..."
 
 4. Check if a branch already exists (this may be a RESUMPTION):
    git fetch origin claudopilot/$ARGUMENTS 2>/dev/null
    If it exists: this is a continuation. Check out the existing branch:
      git checkout claudopilot/$ARGUMENTS
-   Read git log to see what's already been committed. Read the
-   ClickUp comments to see which subtasks were completed.
+   Read git log to see what's already been committed. Fetch ClickUp
+   comments using clickup_get_task_comments with task_id "$ARGUMENTS"
+   to see which subtasks were completed.
    Skip completed subtasks and continue from where it left off.
    If it doesn't exist: create a new branch:
      git checkout -b claudopilot/$ARGUMENTS
@@ -390,7 +359,8 @@ Skip any subtasks that were already completed in a previous run
 (check git log and ClickUp comments).
 For each remaining subtask:
 
-a. Post a comment to ClickUp noting which subtask you're working on.
+a. Post a comment using clickup_create_task_comment with task_id "$ARGUMENTS"
+   noting which subtask you're working on.
 b. Read the relevant files listed in the subtask.
 c. Write failing tests first (TDD) if the project has a test framework.
 d. Implement the changes following existing patterns.
@@ -400,14 +370,13 @@ e. Run any available checks:
    - Typecheck (npm run typecheck, tsc --noEmit, etc.)
    Only run checks that are defined in the project. Skip if not available.
 f. Commit the subtask with a descriptive message.
-g. Post a comment to ClickUp confirming the subtask is done.
-h. If the subtask exists as a ClickUp subtask, mark it done:
-     curl -s -X PUT "https://api.clickup.com/api/v2/task/<subtask_id>" \\
-       -H "Authorization: $CLICKUP_API_KEY" \\
-       -H "Content-Type: application/json" \\
-       -d '{"status":"done"}'
-     (Get the subtask IDs from the parent task's subtasks list
-     fetched in step 1. Match by name.)
+g. Post a comment using clickup_create_task_comment confirming the subtask is done.
+h. If the subtask exists as a ClickUp subtask, mark it done using
+   clickup_update_task with:
+     task_id: <subtask_id>
+     status: "done"
+   (Get the subtask IDs from the parent task's subtasks list
+   fetched in step 1. Match by name.)
 
 FINALIZE:
 
@@ -421,21 +390,17 @@ FINALIZE:
      --base main \\
      --head claudopilot/$ARGUMENTS
 
-3. Post the PR URL as a comment on the ClickUp task:
-   curl -s -X POST "https://api.clickup.com/api/v2/task/$ARGUMENTS/comment" \\
-     -H "Authorization: $CLICKUP_API_KEY" \\
-     -H "Content-Type: application/json" \\
-     -d '{"comment":[{"text":"🔨 [IMPLEMENT] ","attributes":{"bold":true}},{"text":"PR created: <PR_URL>"}]}'
+3. Post the PR URL as a comment using clickup_create_task_comment with:
+     task_id: "$ARGUMENTS"
+     comment_text: "🔨 [IMPLEMENT] PR created: <PR_URL>"
 
-4. Move the task to "in review":
-   curl -s -X PUT "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
-     -H "Authorization: $CLICKUP_API_KEY" \\
-     -H "Content-Type: application/json" \\
-     -d '{"status":"in review"}'
+4. Move the task to "in review" using clickup_update_task with:
+     task_id: "$ARGUMENTS"
+     status: "in review"
 
 RULES:
-- CRITICAL: You MUST use the Bash tool to EXECUTE every curl and git
-  command. Do NOT just describe what you would do — actually run them.
+- CRITICAL: Use the MCP tools for all ClickUp interactions. Use Bash
+  only for git commands, running tests, and creating PRs with gh.
 - Follow existing code patterns. Read before you write.
 - Commit after each subtask, not one giant commit at the end.
 - If a test or lint fails, fix it before moving on.
@@ -464,6 +429,51 @@ CONFIGURED LENSES:
 ${lensesList}
 
 ═══════════════════════════════════════
+STATE FILE (continuation support)
+═══════════════════════════════════════
+
+Before starting, check if /tmp/brainstorm-state.md exists.
+
+If it DOES exist, you are CONTINUING a previous round. Read it to understand:
+- Which lenses are already completed (skip them entirely)
+- Draft ideas not yet created as ClickUp tasks (create them FIRST)
+- Which lens was in progress (resume analysis there)
+- Which lenses remain (analyze those next)
+
+If it does NOT exist, this is a fresh run. Start from Phase 0.
+
+PROGRESS SAVING (critical — do this after EVERY lens):
+After completing analysis for each lens, update /tmp/brainstorm-state.md with
+your findings and draft ideas. This file is your checkpoint — if you run out
+of turns, the next round will read it to continue.
+
+Write draft ideas to the state file BEFORE creating ClickUp tasks. This way,
+if you run out of turns during task creation, the next round can create the
+remaining tasks without re-analyzing code.
+
+State file format:
+\`\`\`markdown
+# Brainstorm State
+
+## Completed Lenses
+- <lens name> (<N> ideas generated, <M> tasks created)
+
+## Draft Ideas (not yet created as tasks)
+### <lens name>
+1. **<idea title>** — <brief description>
+   Files: <affected files>
+   Effort: <trivial|small|medium|large>
+
+## In Progress
+- Currently analyzing: <lens name>
+- Files read so far: [<list>]
+
+## Remaining Lenses
+- <lens name>
+- <lens name>
+\`\`\`
+
+═══════════════════════════════════════
 PHASE 0: LOAD CONTEXT
 ═══════════════════════════════════════
 
@@ -472,9 +482,10 @@ PHASE 0: LOAD CONTEXT
 2. Survey the codebase structure — read key directories, entry points, and
    config files to build a mental model of the architecture.
 
-3. Fetch existing tasks from ClickUp to avoid duplicates:
-   curl -s "https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true" \\
-     -H "Authorization: $CLICKUP_API_KEY"
+3. Fetch existing tasks from ClickUp to avoid duplicates using
+   clickup_get_list_tasks with:
+     list_id: "${listId}"
+     include_closed: true
    Build a list of existing task names/descriptions. You MUST NOT suggest
    anything that overlaps with an existing task.
 
@@ -484,6 +495,9 @@ PHASE 1: DEEP ANALYSIS (per lens)
 
 For each lens (filtered by ARGUMENTS if provided), systematically analyze
 the codebase. Read actual source files — do not guess from file names alone.
+
+IMPORTANT: Update /tmp/brainstorm-state.md to mark this lens as "In Progress"
+before you start reading files.
 
 For each lens, look for these opportunity categories:
 - **Pattern extensions**: A pattern exists in one place but could be applied elsewhere
@@ -496,7 +510,11 @@ For each lens, look for these opportunity categories:
 PHASE 2: GENERATE IDEAS
 ═══════════════════════════════════════
 
-For each lens, identify 2-5 concrete ideas. Each idea MUST have:
+For each lens, identify 2-5 concrete ideas. Write ALL draft ideas to
+/tmp/brainstorm-state.md under "Draft Ideas" BEFORE creating any ClickUp tasks.
+Then move to Phase 3 to create the tasks.
+
+Each idea MUST have:
 
 1. **Specific title**: Describes the change, not the problem.
    Good: "Add input validation to user registration endpoint"
@@ -520,17 +538,13 @@ For each lens, identify 2-5 concrete ideas. Each idea MUST have:
 PHASE 3: CREATE CLICKUP TASKS
 ═══════════════════════════════════════
 
-For each validated idea, create a ClickUp task:
-
-  curl -s -X POST "https://api.clickup.com/api/v2/list/${listId}/task" \\
-    -H "Authorization: $CLICKUP_API_KEY" \\
-    -H "Content-Type: application/json" \\
-    -d '{
-      "name": "<clean, specific title>",
-      "status": "${ideaStatus}",
-      "tags": ["ai-generated", "<lens-tag>"],
-      "markdown_description": "<description — see format below>"
-    }'
+For each validated idea (including any draft ideas from the state file that
+haven't been created yet), create a ClickUp task using clickup_create_task with:
+  list_id: "${listId}"
+  name: "<clean, specific title>"
+  status: "${ideaStatus}"
+  tags: ["ai-generated", "<lens-tag>"]
+  markdown_description: "<description — see format below>"
 
 Task description format:
 \`\`\`
@@ -563,6 +577,10 @@ Lens tag mapping (use these as the second tag):
 - refactoring opportunities → \`refactoring\`
 - For custom lenses, slugify the name (lowercase, hyphens).
 
+After creating each task, update /tmp/brainstorm-state.md:
+- Move the idea from "Draft Ideas" to the "Completed Lenses" section
+- Record the ClickUp task ID next to the idea
+
 ═══════════════════════════════════════
 PHASE 4: SUMMARY
 ═══════════════════════════════════════
@@ -576,8 +594,8 @@ Output a summary listing:
 RULES
 ═══════════════════════════════════════
 
-- CRITICAL: You MUST use the Bash tool to EXECUTE every curl command.
-  Do NOT just describe what you would do — actually run the commands.
+- CRITICAL: Use the MCP tools (clickup_create_task, clickup_get_list_tasks)
+  for all ClickUp interactions. Do NOT use curl.
 - Every task MUST include the \`ai-generated\` tag — this is how humans
   identify AI-generated ideas on the ClickUp board.
 - Task titles stay clean — NO [AI] prefix. Tags handle identification.
