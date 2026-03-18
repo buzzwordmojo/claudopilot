@@ -269,6 +269,10 @@ ${planCompanionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+
       - name: Run planning loop
         id: claude
         continue-on-error: true
@@ -405,6 +409,10 @@ ${implCompanionCheckouts}
         run: |
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
 
       - name: Write code
         id: claude
@@ -630,7 +638,11 @@ ${companionCheckouts}
       - name: Setup Claude credentials
         run: |
           mkdir -p ~/.claude
-          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json`;
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json`;
 }
 
 function generateBrainstormDetectStep(): string {
@@ -756,14 +768,6 @@ jobs:
     steps:
 ${commonSteps}
 
-      - name: Verify MCP server
-        run: |
-          echo "Testing MCP server startup..."
-          timeout 5 node .claude/mcp-server/index.js < /dev/null 2>&1 || true
-          echo "MCP config:"
-          cat .mcp.json
-          echo "CLICKUP_API_KEY is set: \$( [ -n "\$CLICKUP_API_KEY" ] && echo yes || echo NO )"
-
       - name: Run brainstorm
         id: claude
         continue-on-error: true
@@ -773,7 +777,7 @@ ${commonSteps}
           PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/brainstorm.md)
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
-            --debug \\
+            --verbose \\
             --mcp-config .mcp.json \\
             --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
 
