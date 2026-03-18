@@ -721,7 +721,7 @@ ${commonSteps}
         run: |
           LENSES="\${{ github.event.inputs.lenses }}"
           [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
-          PROMPT=$(sed "s/\\$ARGUMENTS/\$LENSES/g" .claude/commands/brainstorm.md)
+          PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/brainstorm.md)
           claude -p "\$PROMPT" \\
             --max-turns 20 \\
             --verbose \\
@@ -759,7 +759,7 @@ ${commonSteps}
         run: |
           LENSES="\${{ github.event.inputs.lenses }}"
           [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
-          PROMPT=$(sed "s/\\$ARGUMENTS/\$LENSES/g" .claude/commands/brainstorm.md)
+          PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/brainstorm.md)
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
             --verbose \\
