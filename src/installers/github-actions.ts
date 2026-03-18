@@ -284,7 +284,7 @@ ${planCompanionCheckouts}
             --max-turns 60 \\
             --verbose \\
             --mcp-config .mcp.json \\
-            --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
 
       - name: Detect failure reason
         id: detect
@@ -427,7 +427,7 @@ ${implCompanionCheckouts}
             --max-turns 60 \\
             --verbose \\
             --mcp-config .mcp.json \\
-            --allowedTools "Read,Edit,Write,Bash,mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
 
       - name: Detect failure reason
         id: detect
@@ -740,7 +740,7 @@ ${commonSteps}
             --max-turns 20 \\
             --verbose \\
             --mcp-config .mcp.json \\
-            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
 
 ${detectStep}`);
   }
@@ -779,7 +779,7 @@ ${commonSteps}
             --max-turns 40 \\
             --verbose \\
             --mcp-config .mcp.json \\
-            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup*" 2>&1 | tee /tmp/claude-output.log
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
 
 ${detectStep}
 ${continuationRounds.join("\n")}
