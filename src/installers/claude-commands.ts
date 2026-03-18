@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ClaudopilotConfig, RedTeamConfig } from "../types.js";
+import type { ClaudopilotConfig, RepoConfig, RedTeamConfig } from "../types.js";
 import { ui } from "../utils/ui.js";
 
 export async function installClaudeCommands(
@@ -29,7 +29,44 @@ export async function installClaudeCommands(
   ui.success("Claude commands installed in .claude/commands/");
 }
 
+function getCompanionRepos(config: ClaudopilotConfig): RepoConfig[] {
+  return config.project.repos.filter(r => r.role === "companion");
+}
+
+function generateMultiRepoContext(config: ClaudopilotConfig, mode: "plan" | "implement"): string {
+  const companions = getCompanionRepos(config);
+  if (companions.length === 0) return "";
+
+  const primary = config.project.repos.find(r => r.role === "primary") ?? config.project.repos[0];
+  const repoLines = [
+    `- ${primary.name} (primary, ${primary.path}): ${primary.description || primary.type}`,
+    ...companions.map(c => `- ${c.name} (companion, ${c.path}): ${c.description || c.type}`),
+  ].join("\n");
+
+  if (mode === "plan") {
+    return `
+MULTI-REPO PROJECT:
+This project spans multiple repositories:
+${repoLines}
+
+When planning, read CLAUDE.md and source from ALL repos.
+In the spec, tag each change with which repo it belongs to.
+`;
+  }
+
+  return `
+MULTI-REPO PROJECT:
+You have write access to all repos:
+${repoLines}
+
+Commit changes to each repo separately using:
+${companions.map(c => `  cd ${c.path} && git add ... && git commit ... && cd ..`).join("\n")}
+Branch name is the same across all repos: claudopilot/<task-id>
+`;
+}
+
 function generatePlanFeatureCommand(config: ClaudopilotConfig): string {
+  const severity = config.redTeam.blockingSeverity ?? "critical";
   const domainLenses = config.redTeam.domainLenses
     .map(
       (l) =>
@@ -37,8 +74,10 @@ function generatePlanFeatureCommand(config: ClaudopilotConfig): string {
     )
     .join("\n\n");
 
-  return `You are working on ClickUp task: $ARGUMENTS
+  const multiRepoContext = generateMultiRepoContext(config, "plan");
 
+  return `You are working on ClickUp task: $ARGUMENTS
+${multiRepoContext}
 First, fetch the task details from ClickUp using:
   curl -s "https://api.clickup.com/api/v2/task/$ARGUMENTS" \\
     -H "Authorization: $CLICKUP_API_KEY"
@@ -117,7 +156,7 @@ LOOP:
 ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
 
    Rate every finding as CRITICAL, HIGH, or MEDIUM.
-   Findings rated ${config.redTeam.blockingSeverity.toUpperCase()} or above BLOCK the spec.
+   Findings rated ${severity.toUpperCase()} or above BLOCK the spec.
    Post a comment to the ClickUp task with findings using
    the rich text format from COMMENT FORMATTING RULES above.
    Use bold for severity labels (CRITICAL:, HIGH:, MEDIUM:)
@@ -145,7 +184,7 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
    If there are no new human comments, proceed to DECISION.
 
 4. DECISION:
-   - If ANY ${config.redTeam.blockingSeverity.toUpperCase()}${config.redTeam.blockingSeverity !== "critical" ? " or above" : ""} findings exist:
+   - If ANY ${severity.toUpperCase()}${severity !== "critical" ? " or above" : ""} findings exist:
      GO TO STEP 1.
 
    - If no blocking findings but you have QUESTIONS for
@@ -238,7 +277,7 @@ RULES:
   Be efficient — combine your analysis.
 - Each red team round must be HARDER than the last.
   Do not repeat the same findings. Go deeper.
-- BLOCKING SEVERITY: ${config.redTeam.blockingSeverity.toUpperCase()} and above block progress.${config.redTeam.blockingSeverity === "critical" ? "\n  The red team must explicitly state when HIGH findings\n  are acceptable risks vs must-fix." : ""}
+- BLOCKING SEVERITY: ${severity.toUpperCase()} and above block progress.${severity === "critical" ? "\n  The red team must explicitly state when HIGH findings\n  are acceptable risks vs must-fix." : ""}
 - Keep a running count: Round N of max ${config.redTeam.maxRounds}.
 - Every comment must start with [ARCHITECT] or [RED TEAM].
 - The spec file should be the FINAL CLEAN RESULT — not an
@@ -249,6 +288,7 @@ RULES:
 }
 
 function generateRedTeamCommand(config: ClaudopilotConfig): string {
+  const severity = config.redTeam.blockingSeverity ?? "critical";
   const domainLenses = config.redTeam.domainLenses
     .map(
       (l) =>
@@ -285,22 +325,25 @@ Evaluate through these lenses:
 
 ${domainLenses}
 
-Blocking threshold: ${config.redTeam.blockingSeverity.toUpperCase()} and above block the spec.
+Blocking threshold: ${severity.toUpperCase()} and above block the spec.
 
 Output format:
 ### Red Team Report
 **CRITICAL** (must fix):
 - ...
-**HIGH** (${config.redTeam.blockingSeverity === "critical" ? "should fix" : "must fix"}):
+**HIGH** (${severity === "critical" ? "should fix" : "must fix"}):
 - ...
-**MEDIUM** (${config.redTeam.blockingSeverity === "medium" ? "must fix" : "consider"}):
+**MEDIUM** (${severity === "medium" ? "must fix" : "consider"}):
 - ...
 **Suggested mitigations** for each blocking item.
 `;
 }
 
 function generateImplementCommand(config: ClaudopilotConfig): string {
+  const multiRepoContext = generateMultiRepoContext(config, "implement");
+
   return `You are implementing ClickUp task: $ARGUMENTS
+${multiRepoContext}
 
 SETUP:
 
@@ -405,6 +448,13 @@ export async function installClaudeMd(
     return false;
   }
 
+  const companions = getCompanionRepos(config);
+  const relatedReposSection = companions.length > 0
+    ? `\n## Related Repositories\n\n${companions.map(c =>
+        `- **${c.name}** (\`${c.remote ?? c.path}\`): ${c.description || c.type}`
+      ).join("\n")}\n`
+    : "";
+
   const content = `# CLAUDE.md
 
 ## Project: ${config.project.name}
@@ -418,7 +468,7 @@ export async function installClaudeMd(
 ## Architecture Notes
 
 <!-- TODO: Describe your project's architecture -->
-
+${relatedReposSection}
 ## Patterns and Conventions
 
 <!-- TODO: Document patterns Claude should follow -->

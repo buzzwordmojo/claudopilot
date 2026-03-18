@@ -19,6 +19,7 @@ interface SecretsOptions {
 interface SecretEntry {
   ghSecretName: string;
   value: string | undefined;
+  displayValue?: string;
   source: string;
   description: string;
   warning?: string;
@@ -41,6 +42,7 @@ export async function secrets(options: SecretsOptions): Promise<void> {
   }
 
   const localSecrets = await loadSecrets();
+  // Secrets are set on the primary repo only — workflows run there and companions use GH_PAT
   const repoSlug = `${config.github.owner}/${config.github.repos[0]}`;
 
   // Read Claude OAuth token
@@ -49,7 +51,11 @@ export async function secrets(options: SecretsOptions): Promise<void> {
     try {
       const raw = await readFile(CREDENTIALS_PATH, "utf-8");
       const creds = JSON.parse(raw);
-      claudeOAuthToken = creds.claudeAiOauth;
+      const oauth = creds.claudeAiOauth;
+      if (oauth) {
+        // Store the full credentials object so the runner can refresh tokens
+        claudeOAuthToken = JSON.stringify({ claudeAiOauth: oauth });
+      }
     } catch {
       ui.warn(`Could not parse ${CREDENTIALS_PATH}`);
     }
@@ -60,8 +66,11 @@ export async function secrets(options: SecretsOptions): Promise<void> {
     {
       ghSecretName: "CLAUDE_LONG_LIVED_TOKEN",
       value: claudeOAuthToken,
+      displayValue: claudeOAuthToken
+        ? (() => { try { const o = JSON.parse(claudeOAuthToken).claudeAiOauth; return typeof o === "string" ? o : o?.accessToken; } catch { return claudeOAuthToken; } })()
+        : undefined,
       source: "~/.claude/.credentials.json",
-      description: "Claude subscription OAuth token (planning + implementation workflows)",
+      description: "Claude credentials with refresh token (planning + implementation workflows)",
       warning:
         "This token is tied to your personal Claude subscription. " +
         "It may expire when you re-login to Claude Code — re-run this command to refresh.",
@@ -94,7 +103,7 @@ export async function secrets(options: SecretsOptions): Promise<void> {
   const missing = entries.filter((e) => !e.value);
 
   for (const entry of available) {
-    ui.success(`${entry.ghSecretName} — ${maskKey(entry.value!)}`);
+    ui.success(`${entry.ghSecretName} — ${maskKey(entry.displayValue ?? entry.value!)}`);
     console.log(`      ${entry.description}`);
     if (entry.warning) {
       ui.warn(entry.warning);

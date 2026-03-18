@@ -1,10 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ui } from "../utils/ui.js";
-import type { GitHubConfig } from "../types.js";
+import type { ClaudopilotConfig, RepoConfig } from "../types.js";
 
 export async function installGitHubActions(
-  githubConfig: GitHubConfig,
+  config: ClaudopilotConfig,
   targetDir: string = process.cwd()
 ): Promise<void> {
   const workflowsDir = join(targetDir, ".github", "workflows");
@@ -22,7 +22,7 @@ export async function installGitHubActions(
 
   await writeFile(
     join(workflowsDir, "claudopilot-worker.yml"),
-    generateWorkerWorkflow(githubConfig)
+    generateWorkerWorkflow(config)
   );
 
   ui.success("GitHub Actions workflows installed in .github/workflows/");
@@ -83,9 +83,128 @@ jobs:
           claude-api-key: \${{ secrets.ANTHROPIC_API_KEY }}
 `;
 
-function generateWorkerWorkflow(config: GitHubConfig): string {
-  const e = (s: string) => s; // no-op, keeps template readable
-  // All ${{ }} and $ env refs need \$ in the template literal
+function getCompanionRepos(config: ClaudopilotConfig): RepoConfig[] {
+  return config.project.repos.filter(r => r.role === "companion");
+}
+
+function generateCompanionCheckoutSteps(companions: RepoConfig[], fetchDepth: number): string {
+  return companions.map(c => `
+      - uses: actions/checkout@v4
+        with:
+          repository: ${c.remote}
+          path: ${c.name}
+          token: \${{ secrets.GH_PAT }}
+          fetch-depth: ${fetchDepth}`).join("\n");
+}
+
+function generateWorkerWorkflow(config: ClaudopilotConfig): string {
+  const companions = getCompanionRepos(config);
+  const hasCompanions = companions.length > 0;
+  const githubConfig = config.github;
+
+  // Companion env var listing paths for Claude context
+  const companionEnvVar = hasCompanions
+    ? `\n  COMPANION_REPOS: "${companions.map(c => c.name).join(",")}"`
+    : "";
+
+  // Planning: checkout companions at default branch (read-only context)
+  const planCompanionCheckouts = hasCompanions
+    ? generateCompanionCheckoutSteps(companions, 1)
+    : "";
+
+  // impl-setup: checkout + branch each companion
+  const implSetupCompanionSteps = hasCompanions
+    ? companions.map(c => `
+      - uses: actions/checkout@v4
+        with:
+          repository: ${c.remote}
+          path: ${c.name}
+          token: \${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Create or resume branch (${c.name})
+        run: |
+          cd ${c.name}
+          git config user.name "${githubConfig.commitName ?? "claudopilot"}"
+          git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
+          if git fetch origin "\$BRANCH" 2>/dev/null; then
+            echo "Resuming existing branch \$BRANCH in ${c.name}"
+            git checkout "\$BRANCH"
+          else
+            echo "Creating new branch \$BRANCH in ${c.name}"
+            git checkout -b "\$BRANCH"
+          fi`).join("\n")
+    : "";
+
+  // implement: checkout companions at branch
+  const implCompanionCheckouts = hasCompanions
+    ? companions.map(c => `
+      - uses: actions/checkout@v4
+        with:
+          repository: ${c.remote}
+          ref: \${{ env.BRANCH }}
+          path: ${c.name}
+          token: \${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Setup git (${c.name})
+        run: |
+          cd ${c.name}
+          git config user.name "${githubConfig.commitName ?? "claudopilot"}"
+          git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"`).join("\n")
+    : "";
+
+  // Push step: push all repos
+  const companionPushCommands = hasCompanions
+    ? companions.map(c => `
+          # Push ${c.name}
+          cd ${c.name}
+          git checkout -- .github/workflows/ 2>/dev/null || true
+          git add -A
+          git diff --cached --quiet || git commit -m "WIP: uncommitted changes"
+          git push origin "\$BRANCH" 2>/dev/null || true
+          cd ..`).join("\n")
+    : "";
+
+  // Finalize: check + create PR per repo
+  const implFinalizeCompanionCheckouts = hasCompanions
+    ? companions.map(c => `
+      - uses: actions/checkout@v4
+        with:
+          repository: ${c.remote}
+          ref: \${{ env.BRANCH }}
+          path: ${c.name}
+          token: \${{ secrets.GH_PAT }}
+          fetch-depth: 0`).join("\n")
+    : "";
+
+  const companionPrLogic = hasCompanions
+    ? companions.map(c => `
+          # Check ${c.name} for commits
+          if [ -d "${c.name}" ]; then
+            cd ${c.name}
+            git fetch origin main 2>/dev/null || git fetch origin master 2>/dev/null || true
+            DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}' || echo "main")
+            C_AHEAD=$(git log "origin/\$DEFAULT_BRANCH..HEAD" --oneline 2>/dev/null | wc -l)
+            if [ "\$C_AHEAD" -gt 0 ]; then
+              C_PR=$(gh pr create \\
+                --repo ${c.remote} \\
+                --title "\$TASK_NAME" \\
+                --body "## ClickUp Task
+          https://app.clickup.com/t/\$TASK_ID
+
+          ## Changes
+          See task description for full spec.
+
+          Related primary PR: \$PR_URL" \\
+                --base "\$DEFAULT_BRANCH" \\
+                --head "\$BRANCH" 2>&1) || C_PR=""
+              [ -n "\$C_PR" ] && ALL_PRS="\$ALL_PRS\\\\n🔗 ${c.name} PR: \$C_PR"
+            fi
+            cd ..
+          fi`).join("\n")
+    : "";
+
   return `name: Claudopilot Worker
 run-name: "\${{ github.event.client_payload.status }} — \${{ github.event.client_payload.task_name || github.event.client_payload.task_id }}"
 on:
@@ -99,7 +218,7 @@ permissions:
 env:
   CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
   TASK_ID: \${{ github.event.client_payload.task_id }}
-  BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}
+  BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}${companionEnvVar}
 
 # ═══════════════════════════════════════════
 # PLANNING
@@ -133,15 +252,19 @@ jobs:
         with:
           fetch-depth: 1
           token: \${{ secrets.GH_PAT }}
+${planCompanionCheckouts}
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
       - name: Run planning loop
         id: claude
         continue-on-error: true
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
         run: |
           export ARGUMENTS="\$TASK_ID"
           PROMPT=$(ARGUMENTS="\$TASK_ID" CLICKUP_API_KEY="\$CLICKUP_API_KEY" envsubst '\$ARGUMENTS \$CLICKUP_API_KEY' < .claude/commands/plan-feature.md)
@@ -228,8 +351,8 @@ jobs:
 
       - name: Create or resume branch
         run: |
-          git config user.name "${config.commitName}"
-          git config user.email "${config.commitEmail}"
+          git config user.name "${githubConfig.commitName ?? "claudopilot"}"
+          git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
           if git fetch origin "\$BRANCH" 2>/dev/null; then
             echo "Resuming existing branch \$BRANCH"
             git checkout "\$BRANCH"
@@ -240,6 +363,7 @@ jobs:
             git checkout -b "\$BRANCH"
             git push --set-upstream origin "\$BRANCH"
           fi
+${implSetupCompanionSteps}
 
   implement:
     if: github.event.client_payload.status == 'approved'
@@ -260,17 +384,22 @@ jobs:
 
       - name: Setup git
         run: |
-          git config user.name "${config.commitName}"
-          git config user.email "${config.commitEmail}"
+          git config user.name "${githubConfig.commitName ?? "claudopilot"}"
+          git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
+${implCompanionCheckouts}
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 
       - name: Write code
         id: claude
         continue-on-error: true
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
           GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
           export ARGUMENTS="\$TASK_ID"
@@ -316,8 +445,6 @@ jobs:
 
       - name: Fix build errors
         if: env.CHECKS_FAILED == 'true'
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}
         run: |
           echo "Build verification failed. Asking Claude to fix..."
           claude -p "The build is failing. Run the failing command(s), read the errors, and fix them. Then commit the fix." \\
@@ -331,6 +458,7 @@ jobs:
           git add -A
           git diff --cached --quiet || git commit -m "WIP: uncommitted changes"
           git push origin "\$BRANCH"
+${companionPushCommands}
 
   impl-finalize:
     if: github.event.client_payload.status == 'approved' && always()
@@ -344,6 +472,7 @@ jobs:
           ref: \${{ env.BRANCH }}
           fetch-depth: 0
           token: \${{ secrets.GH_PAT }}
+${implFinalizeCompanionCheckouts}
 
       - name: Check for commits
         id: check
@@ -380,6 +509,12 @@ jobs:
               --head "\$BRANCH" 2>&1) || PR_URL=""
           fi
           echo "pr_url=\$PR_URL" >> "\$GITHUB_OUTPUT"
+
+          ALL_PRS=""
+          [ -n "\$PR_URL" ] && ALL_PRS="🔗 primary PR: \$PR_URL"
+${companionPrLogic}
+
+          echo "all_prs=\$ALL_PRS" >> "\$GITHUB_OUTPUT"
 
       - name: Wait for Vercel preview
         if: steps.check.outputs.has_commits == 'true'
@@ -421,6 +556,7 @@ jobs:
         if: steps.check.outputs.has_commits == 'true'
         env:
           PR_URL: \${{ steps.pr.outputs.pr_url }}
+          ALL_PRS: \${{ steps.pr.outputs.all_prs }}
           PREVIEW_URL: \${{ steps.vercel.outputs.preview_url }}
           IMPL_OUTCOME: \${{ needs.implement.outputs.outcome }}
           FAILURE_REASON: \${{ needs.implement.outputs.failure_reason }}
@@ -428,7 +564,7 @@ jobs:
         run: |
           if [ "\$IMPL_OUTCOME" = "success" ]; then
             MSG="Implementation complete."
-            [ -n "\$PR_URL" ] && MSG="\$MSG\\\\n\\\\n🔗 PR: \$PR_URL"
+            [ -n "\$ALL_PRS" ] && MSG="\$MSG\\\\n\\\\n\$ALL_PRS"
             [ -n "\$PREVIEW_URL" ] && MSG="\$MSG\\\\n🔗 Preview: \$PREVIEW_URL"
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\

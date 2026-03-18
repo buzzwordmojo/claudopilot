@@ -38,7 +38,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   await installClaudeCommands(config);
 
   ui.step(2, options.includeWorker ? 5 : 4, "Regenerating GitHub Actions workflows...");
-  await installGitHubActions(config.github);
+  await installGitHubActions(config);
 
   ui.step(3, options.includeWorker ? 5 : 4, "Checking CodeRabbit config...");
   await installCodeRabbitConfig();

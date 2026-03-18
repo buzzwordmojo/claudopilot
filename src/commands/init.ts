@@ -1,4 +1,4 @@
-import { confirm, input, select, password } from "@inquirer/prompts";
+import { confirm, input, select, password, checkbox } from "@inquirer/prompts";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -21,6 +21,7 @@ import type {
   GitHubConfig,
   CloudflareConfig,
   RedTeamConfig,
+  RepoConfig,
   StatusConfig,
   Severity,
 } from "../types.js";
@@ -103,7 +104,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 7 : 8;
+  const totalSteps = options.skipCloud ? 8 : 9;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -240,7 +241,122 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  // ─── Step 7: Install files ───
+  // ─── Step 7: Companion repos ───
+  step++;
+  ui.step(step, totalSteps, "Multi-repo setup...");
+
+  const primaryRepo: RepoConfig = {
+    name: projectName,
+    path: ".",
+    type: projectType,
+    remote: githubConfig.repos[0]
+      ? `${githubConfig.owner}/${githubConfig.repos[0]}`
+      : undefined,
+    role: "primary",
+  };
+
+  const allRepos: RepoConfig[] = [primaryRepo];
+  const allGithubRepos: string[] = [...githubConfig.repos];
+
+  // Check for existing companions
+  const existingCompanions = existing?.project?.repos?.filter(r => r.role === "companion") ?? [];
+
+  const multiRepo = await confirm({
+    message: "Does this project span multiple repositories?",
+    default: existingCompanions.length > 0,
+  });
+
+  if (multiRepo) {
+    const availableRepos = githubConfig.fetchedRepos
+      .filter(r => r.name !== githubConfig.repos[0]);
+
+    if (availableRepos.length > 0) {
+      // Pre-select existing companions
+      const existingCompanionNames = existingCompanions.map(c => {
+        const remote = c.remote ?? "";
+        return remote.includes("/") ? remote.split("/").pop()! : c.name;
+      });
+
+      const companionNames = await checkbox({
+        message: "Select companion repositories:",
+        choices: availableRepos.map(r => ({
+          name: r.name,
+          value: r.name,
+          checked: existingCompanionNames.includes(r.name),
+        })),
+      });
+
+      for (const name of companionNames) {
+        const existingCompanion = existingCompanions.find(c =>
+          c.remote === `${githubConfig.owner}/${name}` || c.name === name
+        );
+
+        const compType = await select({
+          message: `Type for ${name}:`,
+          choices: [
+            { name: "Next.js", value: "nextjs" as const },
+            { name: "NestJS", value: "nestjs" as const },
+            { name: "FastAPI", value: "fastapi" as const },
+            { name: "Rails", value: "rails" as const },
+            { name: "Other / Generic", value: "generic" as const },
+          ],
+          default: existingCompanion?.type ?? "generic",
+        });
+
+        const compDescription = await input({
+          message: `Description for ${name} (e.g., "FastAPI backend — REST API + database"):`,
+          default: existingCompanion?.description ?? "",
+        });
+
+        allRepos.push({
+          name,
+          path: `./${name}`,
+          type: compType,
+          remote: `${githubConfig.owner}/${name}`,
+          role: "companion",
+          description: compDescription || undefined,
+        });
+        allGithubRepos.push(name);
+      }
+
+      if (companionNames.length > 0) {
+        ui.success(`${companionNames.length} companion repo(s) added`);
+      }
+    } else {
+      ui.warn("No other repos found — enter companion repo names manually");
+      let addMore = true;
+      while (addMore) {
+        const name = await input({ message: "Companion repo name:" });
+        const compType = await select({
+          message: `Type for ${name}:`,
+          choices: [
+            { name: "Next.js", value: "nextjs" as const },
+            { name: "NestJS", value: "nestjs" as const },
+            { name: "FastAPI", value: "fastapi" as const },
+            { name: "Rails", value: "rails" as const },
+            { name: "Other / Generic", value: "generic" as const },
+          ],
+        });
+        const compDescription = await input({
+          message: `Description for ${name}:`,
+        });
+
+        allRepos.push({
+          name,
+          path: `./${name}`,
+          type: compType,
+          remote: `${githubConfig.owner}/${name}`,
+          role: "companion",
+          description: compDescription || undefined,
+        });
+        allGithubRepos.push(name);
+
+        addMore = await confirm({ message: "Add another companion?", default: false });
+      }
+    }
+  }
+
+  // ─── Install files ───
   step++;
   ui.step(step, totalSteps, "Installing project files...");
 
@@ -250,19 +366,10 @@ export async function init(options: InitOptions): Promise<void> {
       name: projectName,
       type: projectType,
       rootDir: process.cwd(),
-      repos: [
-        {
-          name: projectName,
-          path: ".",
-          type: projectType,
-          remote: githubConfig.repos[0]
-            ? `${githubConfig.owner}/${githubConfig.repos[0]}`
-            : undefined,
-        },
-      ],
+      repos: allRepos,
     },
     pm: { tool: pmConfig.tool, workspaceId: pmConfig.workspaceId, spaceId: pmConfig.spaceId, listId: pmConfig.listId, statuses },
-    github: { owner: githubConfig.owner, repos: githubConfig.repos, anthropicKeySecretName: githubConfig.anthropicKeySecretName, commitName: githubConfig.commitName, commitEmail: githubConfig.commitEmail },
+    github: { owner: githubConfig.owner, repos: allGithubRepos, anthropicKeySecretName: githubConfig.anthropicKeySecretName, commitName: githubConfig.commitName, commitEmail: githubConfig.commitEmail },
     cloudflare: cloudflareConfig
       ? { workerName: cloudflareConfig.workerName, workerUrl }
       : undefined,
@@ -291,7 +398,7 @@ export async function init(options: InitOptions): Promise<void> {
 
   await installClaudeMd(config);
   await installClaudeCommands(config);
-  await installGitHubActions(config.github);
+  await installGitHubActions(config);
   await installCodeRabbitConfig();
 
   // ─── Step 8: MCP setup instructions ───
@@ -455,7 +562,7 @@ async function setupClickUp(savedKey?: string, existing?: PMConfig): Promise<PMC
 
 // ─── GitHub Setup ───
 
-async function setupGitHub(savedPat?: string, existing?: GitHubConfig): Promise<GitHubConfig & { pat: string }> {
+async function setupGitHub(savedPat?: string, existing?: GitHubConfig): Promise<GitHubConfig & { pat: string; fetchedRepos: { name: string; full_name: string }[] }> {
   const detected = await detectGitHubRemote();
 
   let pat: string;
@@ -579,6 +686,7 @@ async function setupGitHub(savedPat?: string, existing?: GitHubConfig): Promise<
     commitName,
     commitEmail,
     pat,
+    fetchedRepos: repos,
   };
 }
 

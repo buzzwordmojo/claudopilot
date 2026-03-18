@@ -46,20 +46,26 @@ export async function auth(): Promise<void> {
   try {
     const raw = await readFile(CREDENTIALS_PATH, "utf-8");
     const creds = JSON.parse(raw);
-    token = creds.claudeAiOauth;
-    if (!token) {
-      ui.error("No claudeAiOauth token found in credentials file. Log into Claude Code first: claude");
+    const oauth = creds.claudeAiOauth;
+    if (!oauth) {
+      ui.error("No Claude OAuth token found in credentials file. Log into Claude Code first: claude");
       process.exitCode = 1;
       return;
     }
+    // Store the full credentials object so the runner can refresh tokens
+    token = JSON.stringify({ claudeAiOauth: oauth });
   } catch {
     ui.error(`Could not parse ${CREDENTIALS_PATH}`);
     process.exitCode = 1;
     return;
   }
 
+  // Secrets are set on the primary repo only — workflows run there and companions use GH_PAT
   const repoSlug = `${config.github.owner}/${config.github.repos[0]}`;
-  ui.info(`Token: ${maskKey(token)}`);
+  const displayToken = typeof JSON.parse(token).claudeAiOauth === "string"
+    ? JSON.parse(token).claudeAiOauth
+    : JSON.parse(token).claudeAiOauth?.accessToken ?? "";
+  ui.info(`Token: ${maskKey(displayToken)}`);
   ui.info(`Target: ${repoSlug}`);
 
   const spinner = ui.spinner(`Setting CLAUDE_LONG_LIVED_TOKEN on ${repoSlug}...`);

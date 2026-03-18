@@ -99,6 +99,36 @@ export async function doctor(): Promise<void> {
     warned++;
   }
 
+  // Check companion repo access
+  const companions = config.project.repos.filter(r => r.role === "companion");
+  if (companions.length > 0) {
+    const ghPat = secrets.GITHUB_PAT;
+    if (ghPat) {
+      for (const companion of companions) {
+        const remote = companion.remote ?? `${config.github.owner}/${companion.name}`;
+        const spinner = ui.spinner(`Checking access to ${remote}...`);
+        try {
+          const res = await fetch(`https://api.github.com/repos/${remote}`, {
+            headers: { Authorization: `Bearer ${ghPat}`, Accept: "application/vnd.github+json" },
+          });
+          if (res.ok) {
+            spinner.succeed(`  Companion repo: ${remote} accessible`);
+            passed++;
+          } else {
+            spinner.fail(`  Companion repo: ${remote} — HTTP ${res.status}`);
+            failed++;
+          }
+        } catch {
+          spinner.fail(`  Companion repo: ${remote} — connection failed`);
+          failed++;
+        }
+      }
+    } else {
+      ui.warn(`${companions.length} companion repo(s) configured but no GITHUB_PAT to verify access`);
+      warned++;
+    }
+  }
+
   // Check Cloudflare Worker
   if (config.cloudflare?.workerUrl) {
     const spinner = ui.spinner("Testing Cloudflare Worker...");

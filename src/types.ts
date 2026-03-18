@@ -26,6 +26,8 @@ export interface RepoConfig {
   path: string;
   type: ProjectType;
   remote?: string;
+  role?: "primary" | "companion";
+  description?: string;
 }
 
 export interface PMConfig {
