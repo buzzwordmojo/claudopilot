@@ -168,7 +168,7 @@ export async function deployCloudflareWorker(
     if (!subdomain) {
       // Create workers.dev subdomain — derive from account ID
       // Cloudflare requires a unique name; use workerName prefix
-      const subdomainName = `claudopilot-${cfConfig.accountId.slice(0, 8)}`;
+      const subdomainName = `claudopilot-${cfConfig.accountId!.slice(0, 8)}`;
       const createRes = await fetch(
         `https://api.cloudflare.com/client/v4/accounts/${cfConfig.accountId}/workers/subdomain`,
         {

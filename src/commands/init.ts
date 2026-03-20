@@ -180,7 +180,7 @@ export async function init(options: InitOptions): Promise<void> {
 
   const statusSpinner = ui.spinner("Updating ClickUp list statuses...");
   try {
-    const adapter = new ClickUpAdapter(pmConfig.apiKey);
+    const adapter = new ClickUpAdapter(pmConfig.apiKey!);
     await adapter.configureStatuses(pmConfig.listId!, statuses);
     statusSpinner.succeed("  ClickUp statuses configured");
   } catch (error) {
@@ -230,11 +230,11 @@ export async function init(options: InitOptions): Promise<void> {
           cloudflareConfig,
           githubConfig,
           githubConfig.pat,
-          pmConfig.apiKey
+          pmConfig.apiKey!
         );
 
         // Create ClickUp webhook pointing to the worker
-        const adapter = new ClickUpAdapter(pmConfig.apiKey);
+        const adapter = new ClickUpAdapter(pmConfig.apiKey!);
         await adapter.createWebhook(
           pmConfig.workspaceId!,
           workerUrl
@@ -1279,7 +1279,7 @@ export async function customizeStatuses(existing?: StatusConfig): Promise<Status
       message: `Status name for "${key}":`,
       default: defaultValue,
     });
-    (statuses as Record<string, string>)[key] = value;
+    (statuses as unknown as Record<string, string>)[key] = value;
   }
 
   return statuses;

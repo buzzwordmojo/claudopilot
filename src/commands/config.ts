@@ -98,7 +98,7 @@ export async function configPm(): Promise<void> {
 
   const statusSpinner = ui.spinner("Updating ClickUp list statuses...");
   try {
-    const adapter = new ClickUpAdapter(pmConfig.apiKey);
+    const adapter = new ClickUpAdapter(pmConfig.apiKey!);
     await adapter.configureStatuses(pmConfig.listId!, statuses);
     statusSpinner.succeed("  ClickUp statuses configured");
   } catch (error) {
