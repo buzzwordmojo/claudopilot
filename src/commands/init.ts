@@ -25,6 +25,8 @@ import type {
   CloudflareConfig,
   RedTeamConfig,
   BrainstormConfig,
+  AssigneeConfig,
+  AutoApproveConfig,
   RepoConfig,
   StatusConfig,
   Severity,
@@ -108,7 +110,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 10 : 11;
+  const totalSteps = options.skipCloud ? 12 : 13;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -245,7 +247,19 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  // ─── Step 7: Companion repos ───
+  // ─── Assignee management ───
+  step++;
+  ui.step(step, totalSteps, "Configuring assignee management...");
+
+  const assigneesConfig = await setupAssignees(pmConfig.apiKey!, pmConfig.workspaceId!, existing?.assignees);
+
+  // ─── Auto-approve tag ───
+  step++;
+  ui.step(step, totalSteps, "Configuring auto-approve...");
+
+  const autoApproveConfig = await setupAutoApprove(existing?.autoApprove);
+
+  // ─── Companion repos ───
   step++;
   ui.step(step, totalSteps, "Multi-repo setup...");
 
@@ -392,6 +406,8 @@ export async function init(options: InitOptions): Promise<void> {
     redTeam: redTeamConfig,
     brainstorm: brainstormConfig,
     deployment: deploymentConfig,
+    assignees: assigneesConfig,
+    autoApprove: autoApproveConfig,
   };
 
   await saveConfig(config);
@@ -972,10 +988,16 @@ export async function setupRedTeam(anthropicKey: string, clickupApiKey: string, 
     ui.success(`${domainLenses.length} domain lens${domainLenses.length > 1 ? "es" : ""} configured`);
   }
 
-  // ─── Blocked assignee ───
+  return { maxRounds, blockingSeverity, domainLenses, blockedAssignee: existing?.blockedAssignee ?? "task_creator", blockedAssigneeUserId: existing?.blockedAssigneeUserId };
+}
+
+// ─── Assignee Management Setup ───
+
+export async function setupAssignees(clickupApiKey: string, workspaceId: string, existing?: AssigneeConfig): Promise<AssigneeConfig> {
   ui.hint([
-    "When the planning agent has questions, it moves the task to 'blocked'.",
-    "Who should be assigned so they know to respond?",
+    "Assignee management controls who gets notified at each workflow transition.",
+    "Humans are unassigned during automated work (no noise), then re-assigned",
+    "when their input is needed (blocked, awaiting approval, in review).",
   ]);
 
   const blockedAssignee = await select({
@@ -1013,7 +1035,78 @@ export async function setupRedTeam(anthropicKey: string, clickupApiKey: string, 
     }
   }
 
-  return { maxRounds, blockingSeverity, domainLenses, blockedAssignee, blockedAssigneeUserId };
+  // Reviewer
+  const reviewerChoice = await select({
+    message: "Who should be assigned when a task needs review? (awaiting approval, in review)",
+    choices: [
+      { name: "Same as blocked assignee", value: "same" },
+      { name: "A specific team member", value: "specific" },
+      { name: "Nobody (skip)", value: "nobody" },
+    ],
+    default: existing?.reviewerUserId
+      ? "specific"
+      : existing?.reviewerUserId === undefined
+        ? "same"
+        : "nobody",
+  });
+
+  let reviewerUserId: string | undefined;
+  if (reviewerChoice === "same") {
+    reviewerUserId = blockedAssignee === "specific" ? blockedAssigneeUserId : undefined;
+  } else if (reviewerChoice === "specific") {
+    const adapter = new ClickUpAdapter(clickupApiKey);
+    const membersSpinner = ui.spinner("Fetching workspace members...");
+    try {
+      const members = await adapter.getMembers(workspaceId);
+      membersSpinner.succeed(`  Found ${members.length} members`);
+
+      reviewerUserId = await select({
+        message: "Assign review tasks to:",
+        choices: members.map((m) => ({
+          name: `${m.username} (${m.email})`,
+          value: m.id,
+        })),
+        default: existing?.reviewerUserId,
+      });
+    } catch (error) {
+      membersSpinner.fail("  Could not fetch members");
+      reviewerUserId = await input({
+        message: "ClickUp user ID for reviewer:",
+        default: existing?.reviewerUserId,
+      });
+    }
+  }
+
+  const unassignOnAutoStart = await confirm({
+    message: "Unassign humans when automation starts working? (reduces notification noise)",
+    default: existing?.unassignOnAutoStart ?? true,
+  });
+
+  ui.success("Assignee management configured");
+
+  return { blockedAssignee, blockedAssigneeUserId, reviewerUserId, unassignOnAutoStart };
+}
+
+// ─── Auto-Approve Setup ───
+
+export async function setupAutoApprove(existing?: AutoApproveConfig): Promise<AutoApproveConfig | undefined> {
+  const enabled = await confirm({
+    message: "Enable auto-approve tag? Tasks with this tag skip manual approval.",
+    default: existing?.enabled ?? true,
+  });
+
+  if (!enabled) {
+    return undefined;
+  }
+
+  const tagName = await input({
+    message: "Tag name:",
+    default: existing?.tagName ?? "auto-approve",
+  });
+
+  ui.success(`Auto-approve enabled for tag "${tagName}"`);
+
+  return { enabled: true, tagName };
 }
 
 // ─── Deployment Setup ───

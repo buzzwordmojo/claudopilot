@@ -8,6 +8,18 @@ export interface DeploymentConfig {
   pollInterval?: number;  // seconds, default 20
 }
 
+export interface AssigneeConfig {
+  blockedAssignee: "task_creator" | "specific";
+  blockedAssigneeUserId?: string;
+  reviewerUserId?: string;
+  unassignOnAutoStart: boolean;
+}
+
+export interface AutoApproveConfig {
+  enabled: boolean;
+  tagName: string;
+}
+
 export interface ClaudopilotConfig {
   version: string;
   project: ProjectConfig;
@@ -17,6 +29,8 @@ export interface ClaudopilotConfig {
   redTeam: RedTeamConfig;
   brainstorm?: BrainstormConfig;
   deployment?: DeploymentConfig;
+  assignees?: AssigneeConfig;
+  autoApprove?: AutoApproveConfig;
 }
 
 export interface ProjectConfig {

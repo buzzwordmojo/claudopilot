@@ -163,6 +163,31 @@ export async function doctor(): Promise<void> {
     }
   }
 
+  // Check assignee management
+  if (config.assignees) {
+    ui.success(`Assignee management: configured (blocked → ${config.assignees.blockedAssignee}${config.assignees.blockedAssigneeUserId ? `, user ${config.assignees.blockedAssigneeUserId}` : ""})`);
+    passed++;
+    if (config.assignees.reviewerUserId) {
+      ui.success(`Reviewer: ${config.assignees.reviewerUserId}`);
+      passed++;
+    }
+    if (config.assignees.unassignOnAutoStart) {
+      ui.success("Unassign on auto-start: enabled");
+      passed++;
+    }
+  } else {
+    ui.warn("No assignee management configured (notifications won't be targeted)");
+    warned++;
+  }
+
+  // Check auto-approve
+  if (config.autoApprove?.enabled) {
+    ui.success(`Auto-approve tag: "${config.autoApprove.tagName}"`);
+    passed++;
+  } else {
+    ui.info("Auto-approve: not enabled (all tasks require manual approval)");
+  }
+
   // Check deployment provider
   const deployment = config.deployment;
   if (!deployment) {

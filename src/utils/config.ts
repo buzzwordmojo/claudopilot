@@ -17,7 +17,18 @@ export async function loadConfig(
   if (!existsSync(configPath)) return null;
 
   const content = await readFile(configPath, "utf-8");
-  return parse(content) as ClaudopilotConfig;
+  const config = parse(content) as ClaudopilotConfig;
+
+  // Migrate blockedAssignee from redTeam to assignees (backward compat)
+  if (config.redTeam?.blockedAssignee && !config.assignees) {
+    config.assignees = {
+      blockedAssignee: config.redTeam.blockedAssignee,
+      blockedAssigneeUserId: config.redTeam.blockedAssigneeUserId,
+      unassignOnAutoStart: true,
+    };
+  }
+
+  return config;
 }
 
 export async function saveConfig(

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ClaudopilotConfig, RepoConfig, RedTeamConfig, BrainstormConfig } from "../types.js";
+import type { ClaudopilotConfig, RepoConfig, RedTeamConfig, BrainstormConfig, AssigneeConfig, AutoApproveConfig } from "../types.js";
 import { ui } from "../utils/ui.js";
 
 export async function installClaudeCommands(
@@ -110,7 +110,15 @@ Post a comment on the task to confirm you've started using
 clickup_create_task_comment with:
   task_id: "$ARGUMENTS"
   comment_text: "🏗️ [ARCHITECT] Reading task and starting planning..."
-
+${config.assignees?.unassignOnAutoStart !== false ? `
+UNASSIGN HUMANS: Before doing any planning work, unassign any current
+human assignees from the task so they don't get notified on every
+progress comment. Get the assignee IDs from the task details you just
+fetched (look at the assignees array) and remove them using
+clickup_update_task with:
+  task_id: "$ARGUMENTS"
+  assignees: { "rem": [<list of current assignee IDs>] }
+` : ""}
 You will alternate between two roles: ARCHITECT and RED TEAM.
 These are adversarial. The architect wants to ship. The red
 team wants to find reasons not to.
@@ -185,18 +193,19 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
    - If no blocking findings but you have QUESTIONS for
      the human (ambiguous requirements, business decisions
      you cannot make):
-     a. Post questions as a ClickUp comment using
-        clickup_create_task_comment with task_id "$ARGUMENTS"
-        and comment_text prefixed with "❓ [BLOCKED]".
-     b. Move the task to "blocked" using clickup_update_task with:
+     a. Move the task to "blocked" using clickup_update_task with:
           task_id: "$ARGUMENTS"
           status: "blocked"
-     c. Assign it so the right person knows to respond using
+     b. Assign the right person so they get notified using
         clickup_update_task with:
           task_id: "$ARGUMENTS"
-${config.redTeam.blockedAssignee === "specific" && config.redTeam.blockedAssigneeUserId
-  ? `          assignees: { "add": [${config.redTeam.blockedAssigneeUserId}] }`
+${config.assignees?.blockedAssignee === "specific" && config.assignees?.blockedAssigneeUserId
+  ? `          assignees: { "add": [${config.assignees.blockedAssigneeUserId}] }`
   : `          assignees: { "add": [<creator_id from task details>] }`}
+     c. THEN post questions as a ClickUp comment using
+        clickup_create_task_comment with task_id "$ARGUMENTS"
+        and comment_text prefixed with "❓ [BLOCKED]"
+        and notify_all: true (so the assigned person gets pinged).
      d. STOP. A human will answer and move the task back to "planning",
         which will trigger a new run. The new run will read comments
         and the spec file to pick up where you left off.
@@ -237,13 +246,30 @@ ${config.redTeam.blockedAssignee === "specific" && config.redTeam.blockedAssigne
         as its working spec, so make them self-contained enough to
         implement without re-reading the entire parent spec.
 
-     d. POST a final summary comment using clickup_create_task_comment.
+     d. CHECK FOR AUTO-APPROVE:
+${config.autoApprove?.enabled ? `        Check the task's tags (from the task details fetched in step 1).
+        If the task has a tag named "${config.autoApprove.tagName}":
+          - Move to "approved" using clickup_update_task with:
+              task_id: "$ARGUMENTS"
+              status: "approved"
+          - Post comment using clickup_create_task_comment with:
+              task_id: "$ARGUMENTS"
+              comment_text: "✅ [ARCHITECT] Auto-approved (task tagged ${config.autoApprove.tagName}). Implementation will start automatically."
+          - STOP.
 
-     e. MOVE the task to "awaiting approval" using clickup_update_task with:
-          task_id: "$ARGUMENTS"
-          status: "awaiting approval"
+        If the task does NOT have the "${config.autoApprove.tagName}" tag:` : "        Proceed to manual approval:"}
+${config.assignees?.reviewerUserId ? `        - Assign reviewer using clickup_update_task with:
+              task_id: "$ARGUMENTS"
+              assignees: { "add": [${config.assignees.reviewerUserId}] }` : ""}
+        - POST a final summary comment using clickup_create_task_comment
+          with notify_all: true:
+            task_id: "$ARGUMENTS"
+            comment_text: "📋 [ARCHITECT] Planning complete — ready for review."
+        - MOVE the task to "awaiting approval" using clickup_update_task with:
+              task_id: "$ARGUMENTS"
+              status: "awaiting approval"
 
-     f. STOP.
+     e. STOP.
 
 RULES:
 - CRITICAL: You MUST use the MCP tools (clickup_get_task, clickup_update_task,
@@ -338,8 +364,15 @@ SETUP:
    clickup_create_task_comment with:
      task_id: "$ARGUMENTS"
      comment_text: "🔨 [IMPLEMENT] Starting implementation. Reading spec and creating branch..."
-
-4. Check if a branch already exists (this may be a RESUMPTION):
+${config.assignees?.unassignOnAutoStart !== false ? `
+4. UNASSIGN HUMANS: Unassign any current human assignees from the task
+   so they don't get notified on every progress comment. Get the assignee
+   IDs from the task details you just fetched and remove them using
+   clickup_update_task with:
+     task_id: "$ARGUMENTS"
+     assignees: { "rem": [<list of current assignee IDs>] }
+` : ""}
+5. Check if a branch already exists (this may be a RESUMPTION):
    git fetch origin claudopilot/$ARGUMENTS 2>/dev/null
    If it exists: this is a continuation. Check out the existing branch:
      git checkout claudopilot/$ARGUMENTS
@@ -350,7 +383,7 @@ SETUP:
    If it doesn't exist: create a new branch:
      git checkout -b claudopilot/$ARGUMENTS
 
-5. Read CLAUDE.md for project patterns and standards.
+6. Read CLAUDE.md for project patterns and standards.
 
 IMPLEMENTATION:
 
@@ -390,11 +423,16 @@ FINALIZE:
      --base main \\
      --head claudopilot/$ARGUMENTS
 
-3. Post the PR URL as a comment using clickup_create_task_comment with:
+3. ${config.assignees?.reviewerUserId ? `Assign reviewer using clickup_update_task with:
      task_id: "$ARGUMENTS"
-     comment_text: "🔨 [IMPLEMENT] PR created: <PR_URL>"
+     assignees: { "add": [${config.assignees.reviewerUserId}] }
 
-4. Move the task to "in review" using clickup_update_task with:
+4. ` : ""}Post the PR URL as a comment using clickup_create_task_comment with:
+     task_id: "$ARGUMENTS"
+     comment_text: "🔨 [IMPLEMENT] PR created: <PR_URL> — ready for review."
+     notify_all: true
+
+${config.assignees?.reviewerUserId ? "5" : "4"}. Move the task to "in review" using clickup_update_task with:
      task_id: "$ARGUMENTS"
      status: "in review"
 

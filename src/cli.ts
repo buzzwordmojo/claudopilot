@@ -14,6 +14,8 @@ import {
   configRedteam,
   configBrainstorm,
   configDeployment,
+  configAssignees,
+  configAutoApprove,
 } from "./commands/config.js";
 
 const program = new Command();
@@ -75,6 +77,16 @@ configCmd
   .command("deployment")
   .description("Preview deployment provider (Vercel, Railway, none)")
   .action(configDeployment);
+
+configCmd
+  .command("assignees")
+  .description("Assignee management for workflow states")
+  .action(configAssignees);
+
+configCmd
+  .command("auto-approve")
+  .description("Auto-approve tag for small tasks")
+  .action(configAutoApprove);
 
 program
   .command("doctor")

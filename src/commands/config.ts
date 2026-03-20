@@ -12,6 +12,8 @@ import {
   setupRedTeam,
   setupDeployment,
   setupBrainstorm,
+  setupAssignees,
+  setupAutoApprove,
   customizeStatuses,
 } from "./init.js";
 import type { ClaudopilotConfig } from "../types.js";
@@ -191,6 +193,41 @@ export async function configBrainstorm(): Promise<void> {
   ui.header("Brainstorm / Ideation Engine");
 
   config.brainstorm = await setupBrainstorm(config.brainstorm);
+  await saveAndUpdate(config);
+}
+
+// ─── config assignees ───
+
+export async function configAssignees(): Promise<void> {
+  ui.banner();
+  const config = await loadConfig();
+  requireConfig(config);
+  const secrets = await loadSecrets();
+
+  ui.header("Assignee Management");
+
+  const clickupKey = secrets.CLICKUP_API_KEY;
+  const workspaceId = config.pm.workspaceId;
+
+  if (!clickupKey || !workspaceId) {
+    ui.error("Missing ClickUp key or workspace ID. Run 'claudopilot init' first.");
+    process.exit(1);
+  }
+
+  config.assignees = await setupAssignees(clickupKey, workspaceId, config.assignees);
+  await saveAndUpdate(config);
+}
+
+// ─── config auto-approve ───
+
+export async function configAutoApprove(): Promise<void> {
+  ui.banner();
+  const config = await loadConfig();
+  requireConfig(config);
+
+  ui.header("Auto-Approve Tag");
+
+  config.autoApprove = await setupAutoApprove(config.autoApprove);
   await saveAndUpdate(config);
 }
 
