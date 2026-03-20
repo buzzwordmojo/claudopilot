@@ -965,6 +965,7 @@ ${companionCheckouts}
           if [ -f context/competitors.json ]; then
             git add context/competitors.json context/competitors.md
             git diff --cached --quiet || git commit -m "chore: update competitive landscape"
+            git pull --rebase origin main
             git push
           else
             echo "No competitor data generated"
