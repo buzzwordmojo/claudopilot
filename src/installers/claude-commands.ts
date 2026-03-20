@@ -662,6 +662,7 @@ RULES
 
 function generateCompetitorsCommand(config: ClaudopilotConfig): string {
   const cc = config.competitors!;
+  const listId = config.pm.listId ?? "<LIST_ID>";
   const knownList = cc.known && cc.known.length > 0
     ? `\nKNOWN COMPETITORS (start here, then discover more):\n${cc.known.map(c => `- ${c}`).join("\n")}\n`
     : "";
@@ -823,18 +824,58 @@ Last updated: YYYY-MM-DD
 \`\`\`
 
 ═══════════════════════════════════════
-PHASE 5: SUMMARY
+PHASE 5: CREATE CLICKUP CARD
+═══════════════════════════════════════
+
+Create a ClickUp task as a dated record of this analysis using
+clickup_create_task with:
+  list_id: "${listId}"
+  name: "Competitive Analysis — YYYY-MM-DD"
+  status: "done"
+  tags: ["competitive-analysis"]
+  markdown_description: <see format below>
+
+The task description should contain a concise summary of findings:
+
+\`\`\`markdown
+# Competitive Analysis — YYYY-MM-DD
+
+## Competitors Profiled
+<For each competitor, one line: **Name** — tagline (key differentiator)>
+
+## Key Findings
+<3-5 bullet points: most important insights from this run>
+
+## Market Gaps & Opportunities
+<bullet list from the gaps array in competitors.json>
+
+## Changes Since Last Run
+<bullet list of what changed, or "First run — initial scan" if new>
+
+---
+*Full details: context/competitors.json and context/competitors.md*
+\`\`\`
+
+IMPORTANT: This task is a REFERENCE CARD only. It uses status "done" and
+tag "competitive-analysis" so the claudopilot worker workflow will never
+act on it. It exists for visibility on the board and to be manually
+moved/referenced later.
+
+═══════════════════════════════════════
+PHASE 6: SUMMARY
 ═══════════════════════════════════════
 
 Output a brief summary:
 - How many competitors profiled (new vs updated)
 - Key changes since last run (if refresh)
 - Top 3 gaps/opportunities worth exploring
+- The ClickUp task ID created
 
 ═══════════════════════════════════════
 RULES
 ═══════════════════════════════════════
 
+- CRITICAL: Use the MCP tools (clickup_create_task) for ClickUp. Do NOT use curl.
 - Use WebSearch and WebFetch for all research. Do NOT fabricate information.
 - Every claim must be verifiable — include source URLs.
 - If you cannot find information about a field, say so explicitly rather

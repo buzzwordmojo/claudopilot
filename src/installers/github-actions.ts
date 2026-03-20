@@ -921,6 +921,9 @@ on:
 permissions:
   contents: write
 
+env:
+  CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
+
 jobs:
   competitors:
     runs-on: ubuntu-latest
@@ -939,6 +942,10 @@ ${companionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+
       - name: Run competitor analysis
         id: claude
         continue-on-error: true
@@ -948,7 +955,8 @@ ${companionCheckouts}
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
             --verbose \\
-            --allowedTools "Read,Write,Bash(mkdir *),WebSearch,WebFetch" 2>&1 | tee /tmp/claude-output.log
+            --mcp-config .mcp.json \\
+            --allowedTools "Read,Write,Bash(mkdir *),WebSearch,WebFetch,mcp__clickup__clickup_create_task" 2>&1 | tee /tmp/claude-output.log
 
       - name: Commit results
         run: |
