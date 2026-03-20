@@ -46,6 +46,13 @@ export async function installGitHubActions(
     );
   }
 
+  if (config.sync?.enabled) {
+    await writeFile(
+      join(workflowsDir, "claudopilot-sync.yml"),
+      generateSyncWorkflow(config)
+    );
+  }
+
   ui.success("GitHub Actions workflows installed in .github/workflows/");
 }
 
@@ -1053,6 +1060,76 @@ ${companionCheckouts}
             echo "✅ Dream engine complete"
           else
             echo "❌ Dream engine failed — check logs"
+            exit 1
+          fi
+`;
+}
+
+function generateSyncWorkflow(config: ClaudopilotConfig): string {
+  const companions = getCompanionRepos(config);
+  const hasCompanions = companions.length > 0;
+  const companionCheckouts = hasCompanions
+    ? generateCompanionCheckoutSteps(companions, 1)
+    : "";
+
+  return `name: Claudopilot Sync
+on:
+  repository_dispatch:
+    types: [clickup-sync]
+
+permissions:
+  contents: read
+
+env:
+  CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
+  TASK_ID: \${{ github.event.client_payload.task_id }}
+
+jobs:
+  sync:
+    name: "\${{ github.event.client_payload.rule_name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: \${{ secrets.GH_PAT }}
+${companionCheckouts}
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Run sync dispatch
+        id: claude
+        continue-on-error: true
+        env:
+          SYNC_PROMPT: \${{ github.event.client_payload.prompt }}
+          RULE_NAME: \${{ github.event.client_payload.rule_name }}
+          TASK_NAME: \${{ github.event.client_payload.task_name }}
+        run: |
+          CONTEXT="Task ID: \$TASK_ID\\nTask Name: \$TASK_NAME\\nRule: \$RULE_NAME\\n\\n"
+          FULL_PROMPT="\$CONTEXT\$SYNC_PROMPT"
+          claude -p "\$FULL_PROMPT" \\
+            --max-turns 15 \\
+            --verbose \\
+            --mcp-config .mcp.json \\
+            --allowedTools "Read,mcp__clickup__clickup_get_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Report outcome
+        if: always()
+        run: |
+          if [ "\${{ steps.claude.outcome }}" = "success" ]; then
+            echo "Sync dispatch complete (\$RULE_NAME)"
+          else
+            echo "Sync dispatch failed — check logs"
             exit 1
           fi
 `;

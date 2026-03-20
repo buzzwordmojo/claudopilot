@@ -32,6 +32,9 @@ import type {
   RepoConfig,
   StatusConfig,
   Severity,
+  SyncConfig,
+  SyncRule,
+  SyncAction,
 } from "../types.js";
 import { DEFAULT_STATUSES, DEFAULT_IMPROVE_LENSES } from "../types.js";
 import { suggestDomainLenses } from "../utils/analyze.js";
@@ -112,7 +115,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 14 : 15;
+  const totalSteps = options.skipCloud ? 15 : 16;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -204,7 +207,13 @@ export async function init(options: InitOptions): Promise<void> {
 
   const redTeamConfig = await setupRedTeam(anthropicKey, pmConfig.apiKey!, pmConfig.workspaceId!, existing?.redTeam);
 
-  // ─── Step 6: Deploy Cloudflare Worker ───
+  // ─── Cross-Board Sync (before Worker so rules can be embedded) ───
+  step++;
+  ui.step(step, totalSteps, "Cross-board sync...");
+
+  const syncConfig = await setupSync(pmConfig.apiKey!, pmConfig.spaceId!, pmConfig.workspaceId!, existing?.sync);
+
+  // ─── Deploy Cloudflare Worker ───
   let cloudflareConfig: CloudflareConfig | undefined;
   let workerUrl: string | undefined;
 
@@ -232,14 +241,23 @@ export async function init(options: InitOptions): Promise<void> {
           cloudflareConfig,
           githubConfig,
           githubConfig.pat,
-          pmConfig.apiKey!
+          pmConfig.apiKey!,
+          syncConfig,
+          pmConfig.sdlcListIds ?? (pmConfig.listId ? [pmConfig.listId] : [])
         );
 
         // Create ClickUp webhook pointing to the worker
+        const webhookEvents = ["taskStatusUpdated"];
+        if (syncConfig?.enabled) {
+          const events = syncConfig.rules.map((r) => r.when.event ?? "status_changed");
+          if (events.includes("created")) webhookEvents.push("taskCreated");
+          if (events.includes("tag_added") || events.includes("tag_removed")) webhookEvents.push("taskTagUpdated");
+        }
         const adapter = new ClickUpAdapter(pmConfig.apiKey!);
         await adapter.createWebhook(
           pmConfig.workspaceId!,
-          workerUrl
+          workerUrl,
+          webhookEvents
         );
         ui.success("ClickUp webhook created → Cloudflare Worker → GitHub Actions");
       } catch (error) {
@@ -424,6 +442,7 @@ export async function init(options: InitOptions): Promise<void> {
     deployment: deploymentConfig,
     assignees: assigneesConfig,
     autoApprove: autoApproveConfig,
+    sync: syncConfig,
   };
 
   await saveConfig(config);
@@ -1395,6 +1414,296 @@ export async function setupDream(existing?: DreamConfig): Promise<DreamConfig | 
   }
 
   return { enabled: true, schedule };
+}
+
+// ─── Sync Setup ───
+
+export async function setupSync(clickupApiKey: string, spaceId: string, workspaceId: string, existing?: SyncConfig): Promise<SyncConfig | undefined> {
+  const config_workspaceId = workspaceId;
+  const enable = await confirm({
+    message: "Enable cross-board sync? (Sync statuses and comments between ClickUp boards via task relationships)",
+    default: existing?.enabled ?? false,
+  });
+
+  if (!enable) {
+    return undefined;
+  }
+
+  const adapter = new ClickUpAdapter(clickupApiKey);
+
+  // Fetch lists for the space
+  const listsSpinner = ui.spinner("Fetching lists...");
+  let lists: { id: string; name: string }[] = [];
+  try {
+    lists = await adapter.getLists(spaceId);
+    listsSpinner.succeed(`  Found ${lists.length} lists`);
+  } catch (error) {
+    listsSpinner.fail("  Could not fetch lists");
+    ui.warn(`${error}`);
+    return undefined;
+  }
+
+  // Set up named boards
+  const boards: Record<string, string> = { ...(existing?.boards ?? {}) };
+
+  if (Object.keys(boards).length > 0) {
+    ui.info("Existing boards:");
+    for (const [name, id] of Object.entries(boards)) {
+      const listName = lists.find((l) => l.id === id)?.name ?? id;
+      console.log(`    ${chalk.bold.white(name)}: ${chalk.dim(listName)} (${id})`);
+    }
+    const keepBoards = await confirm({
+      message: "Keep existing boards?",
+      default: true,
+    });
+    if (!keepBoards) {
+      for (const key of Object.keys(boards)) {
+        delete boards[key];
+      }
+    }
+  }
+
+  let addMore = true;
+  while (addMore) {
+    const boardName = await input({
+      message: "Board name (e.g., 'engineering', 'support', 'qa'):",
+    });
+
+    const listId = await select({
+      message: `Select list for "${boardName}":`,
+      choices: lists.map((l) => ({ name: `${l.name} (${l.id})`, value: l.id })),
+    });
+
+    boards[boardName] = listId;
+    ui.success(`Board "${boardName}" → list ${listId}`);
+
+    addMore = await confirm({ message: "Add another board?", default: Object.keys(boards).length < 2 });
+  }
+
+  if (Object.keys(boards).length < 2) {
+    ui.warn("Cross-board sync requires at least 2 boards.");
+    return undefined;
+  }
+
+  // Set up rules
+  const rules: SyncRule[] = [...(existing?.rules ?? [])];
+  const boardNames = Object.keys(boards);
+
+  if (rules.length > 0) {
+    ui.info(`${rules.length} existing rule(s):`);
+    for (const rule of rules) {
+      console.log(`    ${chalk.bold.white(rule.name)}: ${rule.when.board}/${rule.when.status} → ${rule.then.length} action(s)`);
+    }
+    const keepRules = await confirm({
+      message: "Keep existing rules?",
+      default: true,
+    });
+    if (!keepRules) {
+      rules.length = 0;
+    }
+  }
+
+  let addRules = await confirm({
+    message: rules.length > 0 ? "Add more rules?" : "Add sync rules?",
+    default: rules.length === 0,
+  });
+
+  while (addRules) {
+    const ruleName = await input({
+      message: "Rule name (e.g., 'Sync engineering status to support'):",
+    });
+
+    const triggerBoard = await select({
+      message: "Trigger board (when a task on this board changes):",
+      choices: boardNames.map((b) => ({ name: b, value: b })),
+    });
+
+    const triggerEvent = await select({
+      message: "Trigger event:",
+      choices: [
+        { name: "Status changes to...", value: "status_changed" as const },
+        { name: "Task created on this board", value: "created" as const },
+        { name: "Tag added to task", value: "tag_added" as const },
+        { name: "Tag removed from task", value: "tag_removed" as const },
+      ],
+    });
+
+    let triggerTag: string | undefined;
+    if (triggerEvent === "tag_added" || triggerEvent === "tag_removed") {
+      triggerTag = await input({ message: "Tag name:" });
+    }
+
+    let triggerStatus: string | undefined;
+    if (triggerEvent === "status_changed") {
+      // Fetch statuses for the trigger board
+      let statusChoices: { name: string; value: string }[] = [];
+      try {
+        const statuses = await adapter.getListStatuses(boards[triggerBoard]);
+        statusChoices = statuses.map((s) => ({ name: s.status, value: s.status.toLowerCase() }));
+      } catch {
+        ui.warn("Could not fetch statuses — enter manually.");
+      }
+
+      if (statusChoices.length > 0) {
+        triggerStatus = await select({
+          message: "Trigger status:",
+          choices: statusChoices,
+        });
+      } else {
+        triggerStatus = await input({
+          message: "Trigger status (lowercase):",
+        });
+      }
+    }
+
+    // Actions
+    const actions: SyncAction[] = [];
+    let addActions = true;
+    while (addActions) {
+      const actionType = await select({
+        message: "Action type:",
+        choices: [
+          { name: "Update linked task status", value: "update_linked" },
+          { name: "Comment on linked task", value: "comment_linked" },
+          { name: "Create task on another board and link", value: "create_and_link" },
+          { name: "Assign user on linked task", value: "assign_linked" },
+          { name: "Unassign user(s) on linked task", value: "unassign_linked" },
+          { name: "Add tag to linked task", value: "tag_linked" },
+          { name: "Create task link", value: "create_link" },
+          { name: "Dispatch to Claude (complex reasoning)", value: "dispatch" },
+        ],
+      });
+
+      if (actionType === "update_linked") {
+        const targetBoard = await select({
+          message: "Target board:",
+          choices: boardNames.filter((b) => b !== triggerBoard).map((b) => ({ name: b, value: b })),
+        });
+        let targetStatus: string;
+        try {
+          const targetStatuses = await adapter.getListStatuses(boards[targetBoard]);
+          targetStatus = await select({
+            message: "Set linked task status to:",
+            choices: targetStatuses.map((s) => ({ name: s.status, value: s.status.toLowerCase() })),
+          });
+        } catch {
+          targetStatus = await input({ message: "Target status (lowercase):" });
+        }
+        actions.push({ update_linked: { board: targetBoard, status: targetStatus } });
+      } else if (actionType === "create_and_link") {
+        const targetBoard = await select({
+          message: "Create task on which board:",
+          choices: boardNames.filter((b) => b !== triggerBoard).map((b) => ({ name: b, value: b })),
+        });
+        let targetStatus: string | undefined;
+        const setStatus = await confirm({ message: "Set an initial status on the new task?", default: false });
+        if (setStatus) {
+          try {
+            const targetStatuses = await adapter.getListStatuses(boards[targetBoard]);
+            targetStatus = await select({
+              message: "Initial status:",
+              choices: targetStatuses.map((s) => ({ name: s.status, value: s.status.toLowerCase() })),
+            });
+          } catch {
+            targetStatus = await input({ message: "Initial status (lowercase):" });
+          }
+        }
+        actions.push({ create_and_link: { board: targetBoard, status: targetStatus } });
+      } else if (actionType === "assign_linked") {
+        const targetBoard = await select({
+          message: "Target board:",
+          choices: boardNames.filter((b) => b !== triggerBoard).map((b) => ({ name: b, value: b })),
+        });
+        let userId: string;
+        try {
+          const members = await adapter.getMembers(config_workspaceId);
+          userId = await select({
+            message: "Assign to:",
+            choices: members.map((m) => ({ name: `${m.username} (${m.email})`, value: m.id })),
+          });
+        } catch {
+          userId = await input({ message: "ClickUp user ID:" });
+        }
+        actions.push({ assign_linked: { board: targetBoard, userId } });
+      } else if (actionType === "unassign_linked") {
+        const targetBoard = await select({
+          message: "Target board:",
+          choices: boardNames.filter((b) => b !== triggerBoard).map((b) => ({ name: b, value: b })),
+        });
+        const unassignSpecific = await confirm({ message: "Unassign a specific user? (No = unassign all)", default: false });
+        let userId: string | undefined;
+        if (unassignSpecific) {
+          try {
+            const members = await adapter.getMembers(config_workspaceId);
+            userId = await select({
+              message: "Unassign:",
+              choices: members.map((m) => ({ name: `${m.username} (${m.email})`, value: m.id })),
+            });
+          } catch {
+            userId = await input({ message: "ClickUp user ID:" });
+          }
+        }
+        actions.push({ unassign_linked: { board: targetBoard, userId } });
+      } else if (actionType === "tag_linked") {
+        const targetBoard = await select({
+          message: "Target board:",
+          choices: boardNames.filter((b) => b !== triggerBoard).map((b) => ({ name: b, value: b })),
+        });
+        const tag = await input({ message: "Tag name:" });
+        actions.push({ tag_linked: { board: targetBoard, tag } });
+      } else if (actionType === "comment_linked") {
+        const targetBoard = await select({
+          message: "Target board:",
+          choices: boardNames.filter((b) => b !== triggerBoard).map((b) => ({ name: b, value: b })),
+        });
+        const text = await input({
+          message: "Comment text (supports {{status}}, {{taskName}} templates):",
+        });
+        actions.push({ comment_linked: { board: targetBoard, text } });
+      } else if (actionType === "create_link") {
+        const taskId = await input({ message: "Task ID to link to:" });
+        actions.push({ create_link: { taskId } });
+      } else if (actionType === "dispatch") {
+        const prompt = await input({
+          message: "Claude prompt (what should Claude do?):",
+        });
+        actions.push({ dispatch: { prompt } });
+      }
+
+      addActions = await confirm({ message: "Add another action to this rule?", default: false });
+    }
+
+    rules.push({ name: ruleName, when: { board: triggerBoard, event: triggerEvent, status: triggerStatus, tag: triggerTag }, then: actions });
+    ui.success(`Rule "${ruleName}" added`);
+
+    addRules = await confirm({ message: "Add another rule?", default: false });
+  }
+
+  if (rules.length === 0) {
+    ui.warn("No rules configured — sync will be enabled but won't do anything.");
+  }
+
+  // Dispatch gate tag
+  ui.hint([
+    "You can require a specific tag on tasks before the planning/implementation",
+    "workflow triggers. Tasks without this tag will be ignored even if they",
+    "reach 'planning' or 'approved' status. Leave empty to process all tasks.",
+  ]);
+
+  const useGateTag = await confirm({
+    message: "Require a tag for planning/implementation dispatch?",
+    default: !!existing?.dispatchGateTag,
+  });
+
+  let dispatchGateTag: string | undefined;
+  if (useGateTag) {
+    dispatchGateTag = await input({
+      message: "Tag name (tasks must have this tag to trigger planning/implementation):",
+      default: existing?.dispatchGateTag ?? "claudopilot",
+    });
+  }
+
+  return { enabled: true, boards, rules, dispatchGateTag };
 }
 
 // ─── Status Customization ───

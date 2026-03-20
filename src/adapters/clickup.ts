@@ -117,7 +117,8 @@ export class ClickUpAdapter implements PMAdapter {
 
   async createWebhook(
     workspaceId: string,
-    webhookUrl: string
+    webhookUrl: string,
+    events: string[] = ["taskStatusUpdated"]
   ): Promise<{ id: string }> {
     const data = await this.request<{ id: string; webhook: { id: string } }>(
       `/team/${workspaceId}/webhook`,
@@ -125,7 +126,7 @@ export class ClickUpAdapter implements PMAdapter {
         method: "POST",
         body: JSON.stringify({
           endpoint: webhookUrl,
-          events: ["taskStatusUpdated"],
+          events,
         }),
       }
     );
@@ -183,6 +184,44 @@ export class ClickUpAdapter implements PMAdapter {
       user: { id: number; username: string; email: string };
     }>("/user");
     return data.user;
+  }
+
+  async getListStatuses(
+    listId: string
+  ): Promise<{ status: string; orderindex: number; color: string }[]> {
+    const data = await this.request<{
+      statuses: { status: string; orderindex: number; color: string }[];
+    }>(`/list/${listId}`);
+    return data.statuses;
+  }
+
+  async getTaskWithLinks(
+    taskId: string
+  ): Promise<{
+    id: string;
+    name: string;
+    status: { status: string };
+    list: { id: string };
+    linked_tasks: { task_id: string; link_id: string }[];
+  }> {
+    const data = await this.request<{
+      id: string;
+      name: string;
+      status: { status: string };
+      list: { id: string };
+      linked_tasks: { task_id: string; link_id: string }[];
+    }>(`/task/${taskId}?include_subtasks=true`);
+    return data;
+  }
+
+  async createTaskLink(
+    taskId: string,
+    linksTo: string
+  ): Promise<{ task: { id: string } }> {
+    return this.request<{ task: { id: string } }>(
+      `/task/${taskId}/link/${linksTo}`,
+      { method: "POST" }
+    );
   }
 }
 

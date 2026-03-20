@@ -14,6 +14,7 @@ import {
   setupImprove,
   setupCompetitors,
   setupDream,
+  setupSync,
   setupAssignees,
   setupAutoApprove,
   customizeStatuses,
@@ -256,6 +257,29 @@ export async function configAutoApprove(): Promise<void> {
   ui.header("Auto-Approve Tag");
 
   config.autoApprove = await setupAutoApprove(config.autoApprove);
+  await saveAndUpdate(config);
+}
+
+// ─── config sync ───
+
+export async function configSync(): Promise<void> {
+  ui.banner();
+  const config = await loadConfig();
+  requireConfig(config);
+  const secrets = await loadSecrets();
+
+  ui.header("Cross-Board Sync");
+
+  const clickupKey = secrets.CLICKUP_API_KEY;
+  const spaceId = config.pm.spaceId;
+  const workspaceId = config.pm.workspaceId;
+
+  if (!clickupKey || !spaceId || !workspaceId) {
+    ui.error("Missing ClickUp key, space ID, or workspace ID. Run 'claudopilot init' first.");
+    process.exit(1);
+  }
+
+  config.sync = await setupSync(clickupKey, spaceId, workspaceId, config.sync);
   await saveAndUpdate(config);
 }
 

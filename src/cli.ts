@@ -18,6 +18,7 @@ import {
   configImprove,
   configCompetitors,
   configDream,
+  configSync,
   configDeployment,
   configAssignees,
   configAutoApprove,
@@ -90,6 +91,11 @@ configCmd
   .command("dream")
   .description("Dream engine schedule")
   .action(configDream);
+
+configCmd
+  .command("sync")
+  .description("Cross-board sync rules engine")
+  .action(configSync);
 
 configCmd
   .command("deployment")

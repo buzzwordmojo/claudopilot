@@ -180,6 +180,41 @@ export async function doctor(): Promise<void> {
     warned++;
   }
 
+  // Check sync
+  if (config.sync?.enabled) {
+    const boardCount = Object.keys(config.sync.boards).length;
+    const ruleCount = config.sync.rules.length;
+    ui.success(`Cross-board sync: ${boardCount} board(s), ${ruleCount} rule(s)`);
+    passed++;
+
+    // Verify board list IDs exist
+    if (clickupKey) {
+      for (const [name, listId] of Object.entries(config.sync.boards)) {
+        const boardSpinner = ui.spinner(`Verifying board "${name}" (list ${listId})...`);
+        try {
+          const adapter = new ClickUpAdapter(clickupKey);
+          await adapter.getListStatuses(listId);
+          boardSpinner.succeed(`  Board "${name}": list ${listId} accessible`);
+          passed++;
+        } catch {
+          boardSpinner.fail(`  Board "${name}": list ${listId} not accessible`);
+          failed++;
+        }
+      }
+    }
+
+    // Check sync workflow exists
+    if (config.sync.rules.some((r) => r.then.some((a) => "dispatch" in a))) {
+      if (existsSync(join(workflowsDir, "claudopilot-sync.yml"))) {
+        ui.success("GitHub Action: claudopilot-sync.yml");
+        passed++;
+      } else {
+        ui.error("Missing workflow: claudopilot-sync.yml (sync dispatch rules configured)");
+        failed++;
+      }
+    }
+  }
+
   // Check auto-approve
   if (config.autoApprove?.enabled) {
     ui.success(`Auto-approve tag: "${config.autoApprove.tagName}"`);

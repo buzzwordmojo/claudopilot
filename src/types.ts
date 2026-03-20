@@ -33,6 +33,7 @@ export interface ClaudopilotConfig {
   deployment?: DeploymentConfig;
   assignees?: AssigneeConfig;
   autoApprove?: AutoApproveConfig;
+  sync?: SyncConfig;
 }
 
 export interface ProjectConfig {
@@ -64,6 +65,7 @@ export interface PMConfig {
   workspaceId?: string;
   spaceId?: string;
   listId?: string;
+  sdlcListIds?: string[];  // boards where planning/implementation dispatch fires
   statuses: StatusConfig;
 }
 
@@ -142,6 +144,36 @@ export interface DreamConfig {
   enabled: boolean;
   schedule?: string;           // cron expression for periodic runs
 }
+
+export interface SyncConfig {
+  enabled: boolean;
+  boards: Record<string, string>;  // name → listId
+  rules: SyncRule[];
+  dispatchGateTag?: string;  // if set, planning/approved dispatch only fires when task has this tag
+}
+
+export interface SyncRule {
+  name: string;
+  when: SyncTrigger;
+  then: SyncAction[];
+}
+
+export interface SyncTrigger {
+  board: string;    // references boards key
+  event?: "status_changed" | "created" | "tag_added" | "tag_removed";  // defaults to "status_changed"
+  status?: string;  // status value to trigger on (required for status_changed)
+  tag?: string;     // tag name to trigger on (required for tag_added/tag_removed)
+}
+
+export type SyncAction =
+  | { update_linked: { board: string; status: string } }
+  | { comment_linked: { board: string; text: string } }
+  | { create_link: { taskId: string } }
+  | { create_and_link: { board: string; status?: string } }
+  | { assign_linked: { board: string; userId: string } }
+  | { unassign_linked: { board: string; userId?: string } }
+  | { tag_linked: { board: string; tag: string } }
+  | { dispatch: { prompt: string } };
 
 export const DEFAULT_IMPROVE_LENSES = [
   "code quality",
