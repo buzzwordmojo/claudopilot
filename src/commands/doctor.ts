@@ -49,13 +49,13 @@ export async function doctor(): Promise<void> {
     }
   }
 
-  // Check brainstorm command
-  if (config.brainstorm?.enabled) {
-    if (existsSync(join(commandsDir, "brainstorm.md"))) {
-      ui.success("Claude command: brainstorm.md");
+  // Check improve command
+  if (config.improve?.enabled) {
+    if (existsSync(join(commandsDir, "improve.md"))) {
+      ui.success("Claude command: improve.md");
       passed++;
     } else {
-      ui.error("Missing Claude command: brainstorm.md (brainstorm enabled)");
+      ui.error("Missing Claude command: improve.md (improve enabled)");
       failed++;
     }
   }
@@ -87,8 +87,8 @@ export async function doctor(): Promise<void> {
     "security-review.yml",
     "claudopilot-worker.yml",
   ];
-  if (config.brainstorm?.enabled) {
-    expectedWorkflows.push("claudopilot-brainstorm.yml");
+  if (config.improve?.enabled) {
+    expectedWorkflows.push("claudopilot-improve.yml");
   }
   for (const wf of expectedWorkflows) {
     if (existsSync(join(workflowsDir, wf))) {

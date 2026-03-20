@@ -25,10 +25,10 @@ export async function installGitHubActions(
     generateWorkerWorkflow(config)
   );
 
-  if (config.brainstorm?.enabled) {
+  if (config.improve?.enabled) {
     await writeFile(
-      join(workflowsDir, "claudopilot-brainstorm.yml"),
-      generateBrainstormWorkflow(config)
+      join(workflowsDir, "claudopilot-improve.yml"),
+      generateImproveWorkflow(config)
     );
   }
 
@@ -36,6 +36,13 @@ export async function installGitHubActions(
     await writeFile(
       join(workflowsDir, "claudopilot-competitors.yml"),
       generateCompetitorsWorkflow(config)
+    );
+  }
+
+  if (config.dream?.enabled) {
+    await writeFile(
+      join(workflowsDir, "claudopilot-dream.yml"),
+      generateDreamWorkflow(config)
     );
   }
 
@@ -731,7 +738,7 @@ ${generateDeploymentDetectionStep(config)}
 `;
 }
 
-function generateBrainstormCommonSteps(config: ClaudopilotConfig): string {
+function generateImproveCommonSteps(config: ClaudopilotConfig): string {
   const companions = getCompanionRepos(config);
   const hasCompanions = companions.length > 0;
 
@@ -757,16 +764,16 @@ ${companionCheckouts}
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json`;
 }
 
-function generateBrainstormDetectStep(): string {
+function generateImproveDetectStep(): string {
   return `      - name: Detect outcome
         id: detect
         if: always()
         run: |
           if [ "\${{ steps.claude.outcome }}" = "success" ]; then
             # Claude finished naturally — check if all lenses are done
-            if [ -f /tmp/brainstorm-state.md ]; then
-              if grep -q "## Remaining Lenses" /tmp/brainstorm-state.md 2>/dev/null && \\
-                 grep -A100 "## Remaining Lenses" /tmp/brainstorm-state.md | grep -q "^-"; then
+            if [ -f /tmp/improve-state.md ]; then
+              if grep -q "## Remaining Lenses" /tmp/improve-state.md 2>/dev/null && \\
+                 grep -A100 "## Remaining Lenses" /tmp/improve-state.md | grep -q "^-"; then
                 echo "needs_continuation=true" >> "\$GITHUB_OUTPUT"
               else
                 echo "needs_continuation=false" >> "\$GITHUB_OUTPUT"
@@ -776,47 +783,47 @@ function generateBrainstormDetectStep(): string {
             fi
           else
             # Claude was interrupted (turn limit, rate limit, or error)
-            if [ -f /tmp/brainstorm-state.md ]; then
+            if [ -f /tmp/improve-state.md ]; then
               echo "needs_continuation=true" >> "\$GITHUB_OUTPUT"
             else
               echo "needs_continuation=false" >> "\$GITHUB_OUTPUT"
             fi
           fi
 
-      - name: Upload brainstorm state
+      - name: Upload improve state
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: brainstorm-state
-          path: /tmp/brainstorm-state.md
+          name: improve-state
+          path: /tmp/improve-state.md
           if-no-files-found: ignore
           overwrite: true`;
 }
 
-function generateBrainstormWorkflow(config: ClaudopilotConfig): string {
-  const allLenses = config.brainstorm?.lenses ?? [];
+function generateImproveWorkflow(config: ClaudopilotConfig): string {
+  const allLenses = config.improve?.lenses ?? [];
   const defaultLensesStr = allLenses.join(",");
 
-  const scheduleBlock = config.brainstorm?.schedule
-    ? `\n  schedule:\n    - cron: "${config.brainstorm.schedule}"`
+  const scheduleBlock = config.improve?.schedule
+    ? `\n  schedule:\n    - cron: "${config.improve.schedule}"`
     : "";
 
-  const commonSteps = generateBrainstormCommonSteps(config);
-  const detectStep = generateBrainstormDetectStep();
+  const commonSteps = generateImproveCommonSteps(config);
+  const detectStep = generateImproveDetectStep();
 
   // Generate continuation round jobs (rounds 2-5)
   const continuationRounds: string[] = [];
   for (let round = 2; round <= 5; round++) {
-    const prevJob = round === 2 ? "brainstorm" : `brainstorm-round-${round - 1}`;
+    const prevJob = round === 2 ? "improve" : `improve-round-${round - 1}`;
 
     continuationRounds.push(`
   approve-round-${round}:
     needs: ${prevJob}
     if: needs.${prevJob}.outputs.needs_continuation == 'true' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    environment: brainstorm-continue
+    environment: improve-continue
     steps:
-      - run: echo "Round ${round} approved — continuing brainstorm"
+      - run: echo "Round ${round} approved — continuing improve"
 
   auto-approve-round-${round}:
     needs: ${prevJob}
@@ -825,7 +832,7 @@ function generateBrainstormWorkflow(config: ClaudopilotConfig): string {
     steps:
       - run: echo "Scheduled run — auto-continuing round ${round}"
 
-  brainstorm-round-${round}:
+  improve-round-${round}:
     needs: [approve-round-${round}, auto-approve-round-${round}]
     if: always() && (needs.approve-round-${round}.result == 'success' || needs.auto-approve-round-${round}.result == 'success')
     runs-on: ubuntu-latest
@@ -835,19 +842,19 @@ function generateBrainstormWorkflow(config: ClaudopilotConfig): string {
     steps:
 ${commonSteps}
 
-      - name: Download brainstorm state
+      - name: Download improve state
         uses: actions/download-artifact@v4
         with:
-          name: brainstorm-state
+          name: improve-state
           path: /tmp
 
-      - name: Run brainstorm (round ${round})
+      - name: Run improve (round ${round})
         id: claude
         continue-on-error: true
         run: |
           LENSES="\${{ github.event.inputs.lenses }}"
           [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
-          PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/brainstorm.md)
+          PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/improve.md)
           claude -p "\$PROMPT" \\
             --max-turns 20 \\
             --verbose \\
@@ -857,7 +864,7 @@ ${commonSteps}
 ${detectStep}`);
   }
 
-  return `name: Claudopilot Brainstorm
+  return `name: Claudopilot Improve
 on:
   workflow_dispatch:
     inputs:
@@ -872,7 +879,7 @@ env:
   CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
 
 jobs:
-  brainstorm:
+  improve:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -880,13 +887,13 @@ jobs:
     steps:
 ${commonSteps}
 
-      - name: Run brainstorm
+      - name: Run improve
         id: claude
         continue-on-error: true
         run: |
           LENSES="\${{ github.event.inputs.lenses }}"
           [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
-          PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/brainstorm.md)
+          PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/improve.md)
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
             --verbose \\
@@ -965,7 +972,9 @@ ${companionCheckouts}
           if [ -f context/competitors.json ]; then
             git add context/competitors.json context/competitors.md
             git diff --cached --quiet || git commit -m "chore: update competitive landscape"
+            git stash --include-untracked || true
             git pull --rebase origin main
+            git stash pop || true
             git push
           else
             echo "No competitor data generated"
@@ -978,6 +987,72 @@ ${companionCheckouts}
             echo "✅ Competitor analysis complete"
           else
             echo "❌ Competitor analysis failed — check logs"
+            exit 1
+          fi
+`;
+}
+
+function generateDreamWorkflow(config: ClaudopilotConfig): string {
+  const scheduleBlock = config.dream?.schedule
+    ? `\n  schedule:\n    - cron: "${config.dream.schedule}"`
+    : "";
+
+  const companions = getCompanionRepos(config);
+  const hasCompanions = companions.length > 0;
+  const companionCheckouts = hasCompanions
+    ? generateCompanionCheckoutSteps(companions, 1)
+    : "";
+
+  return `name: Claudopilot Dream
+on:
+  workflow_dispatch:${scheduleBlock}
+
+permissions:
+  contents: read
+
+env:
+  CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
+
+jobs:
+  dream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: \${{ secrets.GH_PAT }}
+${companionCheckouts}
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Run dream engine
+        id: claude
+        continue-on-error: true
+        run: |
+          PROMPT=$(cat .claude/commands/dream.md)
+          claude -p "\$PROMPT" \\
+            --max-turns 40 \\
+            --verbose \\
+            --mcp-config .mcp.json \\
+            --allowedTools "Read,WebSearch,WebFetch,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Report outcome
+        if: always()
+        run: |
+          if [ "\${{ steps.claude.outcome }}" = "success" ]; then
+            echo "✅ Dream engine complete"
+          else
+            echo "❌ Dream engine failed — check logs"
             exit 1
           fi
 `;

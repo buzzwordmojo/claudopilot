@@ -27,8 +27,9 @@ export interface ClaudopilotConfig {
   github: GitHubConfig;
   cloudflare?: CloudflareConfig;
   redTeam: RedTeamConfig;
-  brainstorm?: BrainstormConfig;
+  improve?: ImproveConfig;
   competitors?: CompetitorsConfig;
+  dream?: DreamConfig;
   deployment?: DeploymentConfig;
   assignees?: AssigneeConfig;
   autoApprove?: AutoApproveConfig;
@@ -121,7 +122,7 @@ export interface DomainLens {
   checks: string[];
 }
 
-export interface BrainstormConfig {
+export interface ImproveConfig {
   enabled: boolean;
   schedule?: string;           // cron expression, e.g. "0 9 * * 1" (Monday 9am)
   lenses: string[];            // e.g. ["code quality", "UX", "performance", "security", "docs", "refactoring"]
@@ -137,7 +138,12 @@ export interface CompetitorsConfig {
   schedule?: string;           // cron expression for periodic refresh
 }
 
-export const DEFAULT_BRAINSTORM_LENSES = [
+export interface DreamConfig {
+  enabled: boolean;
+  schedule?: string;           // cron expression for periodic runs
+}
+
+export const DEFAULT_IMPROVE_LENSES = [
   "code quality",
   "UI/UX improvements",
   "documentation gaps",

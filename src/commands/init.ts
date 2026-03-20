@@ -18,6 +18,7 @@ import { installMcpServer } from "../installers/mcp-server.js";
 import type {
   ClaudopilotConfig,
   CompetitorsConfig,
+  DreamConfig,
   DeploymentConfig,
   DeploymentProvider,
   DomainLens,
@@ -25,14 +26,14 @@ import type {
   GitHubConfig,
   CloudflareConfig,
   RedTeamConfig,
-  BrainstormConfig,
+  ImproveConfig,
   AssigneeConfig,
   AutoApproveConfig,
   RepoConfig,
   StatusConfig,
   Severity,
 } from "../types.js";
-import { DEFAULT_STATUSES, DEFAULT_BRAINSTORM_LENSES } from "../types.js";
+import { DEFAULT_STATUSES, DEFAULT_IMPROVE_LENSES } from "../types.js";
 import { suggestDomainLenses } from "../utils/analyze.js";
 import { loadSecrets, saveSecrets, maskKey } from "../utils/secrets.js";
 
@@ -111,7 +112,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 13 : 14;
+  const totalSteps = options.skipCloud ? 14 : 15;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -375,17 +376,23 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  // ─── Brainstorm / Ideation Engine ───
+  // ─── Improvement Engine ───
   step++;
-  ui.step(step, totalSteps, "Brainstorm / ideation engine...");
+  ui.step(step, totalSteps, "Improvement engine...");
 
-  const brainstormConfig = await setupBrainstorm(existing?.brainstorm);
+  const improveConfig = await setupImprove(existing?.improve);
 
   // ─── Competitor Tracking ───
   step++;
   ui.step(step, totalSteps, "Competitor tracking...");
 
   const competitorsConfig = await setupCompetitors(existing?.competitors);
+
+  // ─── Dream Engine ───
+  step++;
+  ui.step(step, totalSteps, "Dream engine...");
+
+  const dreamConfig = await setupDream(existing?.dream);
 
   // ─── Deployment / Preview URLs ───
   step++;
@@ -411,8 +418,9 @@ export async function init(options: InitOptions): Promise<void> {
       ? { workerName: cloudflareConfig.workerName, workerUrl }
       : undefined,
     redTeam: redTeamConfig,
-    brainstorm: brainstormConfig,
+    improve: improveConfig,
     competitors: competitorsConfig,
+    dream: dreamConfig,
     deployment: deploymentConfig,
     assignees: assigneesConfig,
     autoApprove: autoApproveConfig,
@@ -514,26 +522,26 @@ export async function init(options: InitOptions): Promise<void> {
       }
     }
 
-    // Create brainstorm-continue environment for approval gates
-    if (config.brainstorm?.enabled) {
-      const envSpinner = ui.spinner(`Creating brainstorm-continue environment on ${repoSlug}...`);
+    // Create improve-continue environment for approval gates
+    if (config.improve?.enabled) {
+      const envSpinner = ui.spinner(`Creating improve-continue environment on ${repoSlug}...`);
       try {
         execSync(
-          `gh api repos/${repoSlug}/environments/brainstorm-continue --method PUT`,
+          `gh api repos/${repoSlug}/environments/improve-continue --method PUT`,
           {
             env: { ...process.env, GH_TOKEN: githubConfig.pat },
             stdio: ["pipe", "pipe", "pipe"],
           }
         );
-        envSpinner.succeed(`  brainstorm-continue environment created on ${repoSlug}`);
+        envSpinner.succeed(`  improve-continue environment created on ${repoSlug}`);
         ui.hint([
           "To enable approval gates: go to GitHub repo → Settings → Environments →",
-          "brainstorm-continue → add yourself as a required reviewer.",
+          "improve-continue → add yourself as a required reviewer.",
         ]);
       } catch (error: any) {
         const stderr = error?.stderr?.toString?.() || error?.message || String(error);
         envSpinner.fail(`  Could not create environment: ${stderr.trim()}`);
-        ui.warn("You can create the 'brainstorm-continue' environment manually in GitHub repo settings.");
+        ui.warn("You can create the 'improve-continue' environment manually in GitHub repo settings.");
       }
     }
   }
@@ -1206,11 +1214,11 @@ export async function setupDeployment(
   };
 }
 
-// ─── Brainstorm Setup ───
+// ─── Improve Setup ───
 
-export async function setupBrainstorm(existing?: BrainstormConfig): Promise<BrainstormConfig | undefined> {
+export async function setupImprove(existing?: ImproveConfig): Promise<ImproveConfig | undefined> {
   const enable = await confirm({
-    message: "Enable brainstorm/ideation engine? (AI generates improvement ideas as ClickUp tasks)",
+    message: "Enable improvement engine? (AI analyzes codebase and generates improvement ideas as ClickUp tasks)",
     default: existing?.enabled ?? true,
   });
 
@@ -1219,7 +1227,7 @@ export async function setupBrainstorm(existing?: BrainstormConfig): Promise<Brai
   }
 
   const useSchedule = await confirm({
-    message: "Run brainstorm on a schedule?",
+    message: "Run improve on a schedule?",
     default: !!existing?.schedule,
   });
 
@@ -1232,8 +1240,8 @@ export async function setupBrainstorm(existing?: BrainstormConfig): Promise<Brai
   }
 
   // Lens selection
-  const defaultLenses = existing?.lenses ?? DEFAULT_BRAINSTORM_LENSES;
-  ui.info("Default brainstorm lenses:");
+  const defaultLenses = existing?.lenses ?? DEFAULT_IMPROVE_LENSES;
+  ui.info("Default improve lenses:");
   for (const lens of defaultLenses) {
     console.log(`    • ${lens}`);
   }
@@ -1247,7 +1255,7 @@ export async function setupBrainstorm(existing?: BrainstormConfig): Promise<Brai
   if (customizeLenses) {
     const selected = await checkbox({
       message: "Select lenses to enable:",
-      choices: DEFAULT_BRAINSTORM_LENSES.map((l) => ({
+      choices: DEFAULT_IMPROVE_LENSES.map((l) => ({
         name: l,
         value: l,
         checked: defaultLenses.includes(l),
@@ -1359,6 +1367,34 @@ export async function setupCompetitors(existing?: CompetitorsConfig): Promise<Co
     known: known && known.length > 0 ? known : undefined,
     schedule,
   };
+}
+
+// ─── Dream Setup ───
+
+export async function setupDream(existing?: DreamConfig): Promise<DreamConfig | undefined> {
+  const enable = await confirm({
+    message: "Enable dream engine? (AI imagines new features based on competitive landscape and market gaps)",
+    default: existing?.enabled ?? false,
+  });
+
+  if (!enable) {
+    return undefined;
+  }
+
+  const useSchedule = await confirm({
+    message: "Run dream on a schedule?",
+    default: !!existing?.schedule,
+  });
+
+  let schedule: string | undefined;
+  if (useSchedule) {
+    schedule = await input({
+      message: "Cron expression (e.g., '0 9 * * 1' for Monday 9am UTC):",
+      default: existing?.schedule ?? "0 9 * * 1",
+    });
+  }
+
+  return { enabled: true, schedule };
 }
 
 // ─── Status Customization ───

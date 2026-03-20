@@ -6,16 +6,18 @@ import { status } from "./commands/status.js";
 import { update } from "./commands/update.js";
 import { secrets } from "./commands/secrets.js";
 import { auth } from "./commands/auth.js";
-import { brainstorm } from "./commands/brainstorm.js";
+import { improve } from "./commands/improve.js";
 import { competitors } from "./commands/competitors.js";
+import { dream } from "./commands/dream.js";
 import {
   configProject,
   configPm,
   configGithub,
   configCloudflare,
   configRedteam,
-  configBrainstorm,
+  configImprove,
   configCompetitors,
+  configDream,
   configDeployment,
   configAssignees,
   configAutoApprove,
@@ -75,14 +77,19 @@ configCmd
   .action(configRedteam);
 
 configCmd
-  .command("brainstorm")
-  .description("Brainstorm/ideation engine lenses and schedule")
-  .action(configBrainstorm);
+  .command("improve")
+  .description("Improvement engine lenses and schedule")
+  .action(configImprove);
 
 configCmd
   .command("competitors")
   .description("Competitor tracking discovery and schedule")
   .action(configCompetitors);
+
+configCmd
+  .command("dream")
+  .description("Dream engine schedule")
+  .action(configDream);
 
 configCmd
   .command("deployment")
@@ -127,15 +134,20 @@ program
   .action(auth);
 
 program
-  .command("brainstorm")
+  .command("improve")
   .description("Generate improvement ideas as ClickUp tasks")
   .option("--lenses <lenses>", "Comma-separated lenses to analyze")
-  .action(brainstorm);
+  .action(improve);
 
 program
   .command("competitors")
   .description("Run competitive landscape analysis")
   .option("--competitors <names>", "Comma-separated competitor names to research")
   .action(competitors);
+
+program
+  .command("dream")
+  .description("Generate strategic feature ideas from competitive landscape")
+  .action(dream);
 
 program.parse();

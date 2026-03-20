@@ -11,8 +11,9 @@ import {
   setupCloudflare,
   setupRedTeam,
   setupDeployment,
-  setupBrainstorm,
+  setupImprove,
   setupCompetitors,
+  setupDream,
   setupAssignees,
   setupAutoApprove,
   customizeStatuses,
@@ -184,16 +185,16 @@ export async function configRedteam(): Promise<void> {
   await saveAndUpdate(config);
 }
 
-// ─── config brainstorm ───
+// ─── config improve ───
 
-export async function configBrainstorm(): Promise<void> {
+export async function configImprove(): Promise<void> {
   ui.banner();
   const config = await loadConfig();
   requireConfig(config);
 
-  ui.header("Brainstorm / Ideation Engine");
+  ui.header("Improvement Engine");
 
-  config.brainstorm = await setupBrainstorm(config.brainstorm);
+  config.improve = await setupImprove(config.improve);
   await saveAndUpdate(config);
 }
 
@@ -207,6 +208,19 @@ export async function configCompetitors(): Promise<void> {
   ui.header("Competitor Tracking");
 
   config.competitors = await setupCompetitors(config.competitors);
+  await saveAndUpdate(config);
+}
+
+// ─── config dream ───
+
+export async function configDream(): Promise<void> {
+  ui.banner();
+  const config = await loadConfig();
+  requireConfig(config);
+
+  ui.header("Dream Engine");
+
+  config.dream = await setupDream(config.dream);
   await saveAndUpdate(config);
 }
 
