@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { Command } from "commander";
 import { init } from "./commands/init.js";
 import { doctor } from "./commands/doctor.js";
@@ -18,6 +19,9 @@ import {
   configAutoApprove,
 } from "./commands/config.js";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
+
 const program = new Command();
 
 program
@@ -25,7 +29,7 @@ program
   .description(
     "AI-augmented SDLC with self-driving planning, red team loops, and PM integration"
   )
-  .version("0.1.0");
+  .version(version);
 
 program
   .command("init")
