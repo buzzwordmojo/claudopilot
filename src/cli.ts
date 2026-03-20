@@ -7,6 +7,7 @@ import { update } from "./commands/update.js";
 import { secrets } from "./commands/secrets.js";
 import { auth } from "./commands/auth.js";
 import { brainstorm } from "./commands/brainstorm.js";
+import { competitors } from "./commands/competitors.js";
 import {
   configProject,
   configPm,
@@ -14,6 +15,7 @@ import {
   configCloudflare,
   configRedteam,
   configBrainstorm,
+  configCompetitors,
   configDeployment,
   configAssignees,
   configAutoApprove,
@@ -78,6 +80,11 @@ configCmd
   .action(configBrainstorm);
 
 configCmd
+  .command("competitors")
+  .description("Competitor tracking discovery and schedule")
+  .action(configCompetitors);
+
+configCmd
   .command("deployment")
   .description("Preview deployment provider (Vercel, Railway, none)")
   .action(configDeployment);
@@ -124,5 +131,11 @@ program
   .description("Generate improvement ideas as ClickUp tasks")
   .option("--lenses <lenses>", "Comma-separated lenses to analyze")
   .action(brainstorm);
+
+program
+  .command("competitors")
+  .description("Run competitive landscape analysis")
+  .option("--competitors <names>", "Comma-separated competitor names to research")
+  .action(competitors);
 
 program.parse();

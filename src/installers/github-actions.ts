@@ -32,6 +32,13 @@ export async function installGitHubActions(
     );
   }
 
+  if (config.competitors?.enabled) {
+    await writeFile(
+      join(workflowsDir, "claudopilot-competitors.yml"),
+      generateCompetitorsWorkflow(config)
+    );
+  }
+
   ui.success("GitHub Actions workflows installed in .github/workflows/");
 }
 
@@ -888,5 +895,81 @@ ${commonSteps}
 
 ${detectStep}
 ${continuationRounds.join("\n")}
+`;
+}
+
+function generateCompetitorsWorkflow(config: ClaudopilotConfig): string {
+  const scheduleBlock = config.competitors?.schedule
+    ? `\n  schedule:\n    - cron: "${config.competitors.schedule}"`
+    : "";
+
+  const companions = getCompanionRepos(config);
+  const hasCompanions = companions.length > 0;
+  const companionCheckouts = hasCompanions
+    ? generateCompanionCheckoutSteps(companions, 1)
+    : "";
+  const githubConfig = config.github;
+
+  return `name: Claudopilot Competitors
+on:
+  workflow_dispatch:
+    inputs:
+      competitors:
+        description: "Comma-separated competitor names to research (leave empty for full scan)"
+        required: false${scheduleBlock}
+
+permissions:
+  contents: write
+
+jobs:
+  competitors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: \${{ secrets.GH_PAT }}
+${companionCheckouts}
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Run competitor analysis
+        id: claude
+        continue-on-error: true
+        run: |
+          COMPETITORS="\${{ github.event.inputs.competitors }}"
+          PROMPT=$(sed "s|\\$ARGUMENTS|\$COMPETITORS|g" .claude/commands/competitors.md)
+          claude -p "\$PROMPT" \\
+            --max-turns 40 \\
+            --verbose \\
+            --allowedTools "Read,Write,Bash(mkdir *),WebSearch,WebFetch" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Commit results
+        run: |
+          git config user.name "${githubConfig.commitName ?? "claudopilot"}"
+          git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
+          if [ -f context/competitors.json ]; then
+            git add context/competitors.json context/competitors.md
+            git diff --cached --quiet || git commit -m "chore: update competitive landscape"
+            git push
+          else
+            echo "No competitor data generated"
+          fi
+
+      - name: Report outcome
+        if: always()
+        run: |
+          if [ "\${{ steps.claude.outcome }}" = "success" ]; then
+            echo "✅ Competitor analysis complete"
+          else
+            echo "❌ Competitor analysis failed — check logs"
+            exit 1
+          fi
 `;
 }

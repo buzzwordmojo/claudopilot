@@ -28,6 +28,7 @@ export interface ClaudopilotConfig {
   cloudflare?: CloudflareConfig;
   redTeam: RedTeamConfig;
   brainstorm?: BrainstormConfig;
+  competitors?: CompetitorsConfig;
   deployment?: DeploymentConfig;
   assignees?: AssigneeConfig;
   autoApprove?: AutoApproveConfig;
@@ -124,6 +125,16 @@ export interface BrainstormConfig {
   enabled: boolean;
   schedule?: string;           // cron expression, e.g. "0 9 * * 1" (Monday 9am)
   lenses: string[];            // e.g. ["code quality", "UX", "performance", "security", "docs", "refactoring"]
+}
+
+export interface CompetitorsConfig {
+  enabled: boolean;
+  projectDescription: string;  // "CLI that bootstraps AI planning loops..."
+  targetUsers: string;         // "Engineering teams / solo developers"
+  searchTerms: string[];       // ["AI code planning", "automated code review", ...]
+  domain?: string;             // synthesized or user-overridden competitive domain label
+  known?: string[];            // optional seed list of known competitors
+  schedule?: string;           // cron expression for periodic refresh
 }
 
 export const DEFAULT_BRAINSTORM_LENSES = [

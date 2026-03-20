@@ -17,6 +17,7 @@ import { installCodeRabbitConfig } from "../installers/coderabbit.js";
 import { installMcpServer } from "../installers/mcp-server.js";
 import type {
   ClaudopilotConfig,
+  CompetitorsConfig,
   DeploymentConfig,
   DeploymentProvider,
   DomainLens,
@@ -110,7 +111,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 12 : 13;
+  const totalSteps = options.skipCloud ? 13 : 14;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -380,6 +381,12 @@ export async function init(options: InitOptions): Promise<void> {
 
   const brainstormConfig = await setupBrainstorm(existing?.brainstorm);
 
+  // ─── Competitor Tracking ───
+  step++;
+  ui.step(step, totalSteps, "Competitor tracking...");
+
+  const competitorsConfig = await setupCompetitors(existing?.competitors);
+
   // ─── Deployment / Preview URLs ───
   step++;
   ui.step(step, totalSteps, "Preview deployments...");
@@ -405,6 +412,7 @@ export async function init(options: InitOptions): Promise<void> {
       : undefined,
     redTeam: redTeamConfig,
     brainstorm: brainstormConfig,
+    competitors: competitorsConfig,
     deployment: deploymentConfig,
     assignees: assigneesConfig,
     autoApprove: autoApproveConfig,
@@ -1266,6 +1274,91 @@ export async function setupBrainstorm(existing?: BrainstormConfig): Promise<Brai
   }
 
   return { enabled: true, schedule, lenses };
+}
+
+// ─── Competitor Tracking Setup ───
+
+export async function setupCompetitors(existing?: CompetitorsConfig): Promise<CompetitorsConfig | undefined> {
+  const enable = await confirm({
+    message: "Enable competitor tracking? (AI discovers and profiles competitors, tracks changes over time)",
+    default: existing?.enabled ?? false,
+  });
+
+  if (!enable) {
+    return undefined;
+  }
+
+  ui.hint([
+    "We'll ask a few questions about your project to automatically",
+    "discover competitors. You won't need to list them manually.",
+  ]);
+
+  const projectDescription = await input({
+    message: "What does this project do? (1-2 sentences)",
+    default: existing?.projectDescription,
+  });
+
+  const targetUsers = await input({
+    message: "Who are your target users?",
+    default: existing?.targetUsers,
+  });
+
+  const searchTermsRaw = await input({
+    message: "What would someone Google to find a tool like yours? (comma-separated)",
+    default: existing?.searchTerms?.join(", "),
+  });
+
+  const searchTerms = searchTermsRaw
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  // Synthesize a domain label from the answers
+  const domain = existing?.domain ?? `${projectDescription.split(".")[0]} for ${targetUsers.toLowerCase()}`;
+  ui.success(`Competitive domain: "${domain}"`);
+  ui.hint(["This is stored in .claudopilot.yaml — edit anytime."]);
+
+  // Optional: known competitors as hints
+  const addKnown = await confirm({
+    message: "Know any competitors already? (optional — AI will discover them either way)",
+    default: (existing?.known?.length ?? 0) > 0,
+  });
+
+  let known: string[] | undefined;
+  if (addKnown) {
+    const knownRaw = await input({
+      message: "Competitor names (comma-separated):",
+      default: existing?.known?.join(", "),
+    });
+    known = knownRaw
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+  }
+
+  // Schedule
+  const useSchedule = await confirm({
+    message: "Run competitor scan on a schedule?",
+    default: !!existing?.schedule,
+  });
+
+  let schedule: string | undefined;
+  if (useSchedule) {
+    schedule = await input({
+      message: "Cron expression (e.g., '0 9 * * 1' for Monday 9am UTC):",
+      default: existing?.schedule ?? "0 9 * * 1",
+    });
+  }
+
+  return {
+    enabled: true,
+    projectDescription,
+    targetUsers,
+    searchTerms,
+    domain,
+    known: known && known.length > 0 ? known : undefined,
+    schedule,
+  };
 }
 
 // ─── Status Customization ───

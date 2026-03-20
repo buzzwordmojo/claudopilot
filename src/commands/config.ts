@@ -12,6 +12,7 @@ import {
   setupRedTeam,
   setupDeployment,
   setupBrainstorm,
+  setupCompetitors,
   setupAssignees,
   setupAutoApprove,
   customizeStatuses,
@@ -193,6 +194,19 @@ export async function configBrainstorm(): Promise<void> {
   ui.header("Brainstorm / Ideation Engine");
 
   config.brainstorm = await setupBrainstorm(config.brainstorm);
+  await saveAndUpdate(config);
+}
+
+// ─── config competitors ───
+
+export async function configCompetitors(): Promise<void> {
+  ui.banner();
+  const config = await loadConfig();
+  requireConfig(config);
+
+  ui.header("Competitor Tracking");
+
+  config.competitors = await setupCompetitors(config.competitors);
   await saveAndUpdate(config);
 }
 
