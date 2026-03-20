@@ -476,6 +476,10 @@ ${planCompanionCheckouts}
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"comment_text":"✅ [CLAUDOPILOT] Planning complete — spec ready for review."}'
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"status":"awaiting approval"}'
           elif [ "\${{ needs.plan.outputs.failure_reason }}" = "token_exhausted" ]; then
             RESET="\${{ needs.plan.outputs.reset_info }}"
             MSG="Planning paused — Claude token/rate limit reached."
