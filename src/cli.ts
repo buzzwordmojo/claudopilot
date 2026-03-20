@@ -6,6 +6,15 @@ import { update } from "./commands/update.js";
 import { secrets } from "./commands/secrets.js";
 import { auth } from "./commands/auth.js";
 import { brainstorm } from "./commands/brainstorm.js";
+import {
+  configProject,
+  configPm,
+  configGithub,
+  configCloudflare,
+  configRedteam,
+  configBrainstorm,
+  configDeployment,
+} from "./commands/config.js";
 
 const program = new Command();
 
@@ -18,11 +27,54 @@ program
 
 program
   .command("init")
-  .description("Initialize claudopilot in the current project")
+  .description("Initialize claudopilot in the current project (alias for config)")
   .option("--pm <tool>", "Project management tool (clickup)", "clickup")
   .option("--skip-cloud", "Skip cloud resource creation (Cloudflare Worker)")
   .option("--force", "Overwrite existing configuration")
   .action(init);
+
+const configCmd = program
+  .command("config")
+  .description("Configure claudopilot — run without args for full wizard, or specify a section")
+  .option("--pm <tool>", "Project management tool (clickup)", "clickup")
+  .option("--skip-cloud", "Skip cloud resource creation (Cloudflare Worker)")
+  .option("--force", "Overwrite existing configuration")
+  .action(init);
+
+configCmd
+  .command("project")
+  .description("Project name and type")
+  .action(configProject);
+
+configCmd
+  .command("pm")
+  .description("PM tool connection (ClickUp) and statuses")
+  .action(configPm);
+
+configCmd
+  .command("github")
+  .description("GitHub PAT, owner, repo, and git identity")
+  .action(configGithub);
+
+configCmd
+  .command("cloudflare")
+  .description("Cloudflare Worker webhook bridge")
+  .action(configCloudflare);
+
+configCmd
+  .command("redteam")
+  .description("Red team agent lenses, severity, and blocked assignee")
+  .action(configRedteam);
+
+configCmd
+  .command("brainstorm")
+  .description("Brainstorm/ideation engine lenses and schedule")
+  .action(configBrainstorm);
+
+configCmd
+  .command("deployment")
+  .description("Preview deployment provider (Vercel, Railway, none)")
+  .action(configDeployment);
 
 program
   .command("doctor")

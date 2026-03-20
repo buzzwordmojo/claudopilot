@@ -1,3 +1,13 @@
+export type DeploymentProvider = "vercel" | "railway" | "none";
+
+export interface DeploymentConfig {
+  provider: DeploymentProvider;
+  railwayProjectId?: string;
+  railwayServiceId?: string;
+  pollTimeout?: number;   // seconds, default 600
+  pollInterval?: number;  // seconds, default 20
+}
+
 export interface ClaudopilotConfig {
   version: string;
   project: ProjectConfig;
@@ -6,6 +16,7 @@ export interface ClaudopilotConfig {
   cloudflare?: CloudflareConfig;
   redTeam: RedTeamConfig;
   brainstorm?: BrainstormConfig;
+  deployment?: DeploymentConfig;
 }
 
 export interface ProjectConfig {

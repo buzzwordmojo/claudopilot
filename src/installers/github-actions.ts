@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ui } from "../utils/ui.js";
-import type { ClaudopilotConfig, RepoConfig } from "../types.js";
+import type { ClaudopilotConfig, DeploymentConfig, RepoConfig } from "../types.js";
 
 export async function installGitHubActions(
   config: ClaudopilotConfig,
@@ -102,6 +102,145 @@ function generateCompanionCheckoutSteps(companions: RepoConfig[], fetchDepth: nu
           path: ${c.name}
           token: \${{ secrets.GH_PAT }}
           fetch-depth: ${fetchDepth}`).join("\n");
+}
+
+function generateVercelDetectionStep(attempts: number, interval: number): string {
+  return `
+      - name: Wait for Vercel preview
+        if: steps.check.outputs.has_commits == 'true'
+        id: deployment
+        env:
+          GH_TOKEN: \${{ secrets.GH_PAT }}
+        run: |
+          echo "Waiting for Vercel deployment on \$BRANCH..."
+          PREVIEW_URL=""
+          for i in $(seq 1 ${attempts}); do
+            DEPLOY=$(curl -s \\
+              -H "Authorization: Bearer \$GH_TOKEN" \\
+              -H "Accept: application/vnd.github+json" \\
+              "https://api.github.com/repos/\${{ github.repository }}/deployments?ref=\$BRANCH&per_page=1")
+            DEPLOY_ID=$(echo "\$DEPLOY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'] if d else '')" 2>/dev/null || echo "")
+            if [ -n "\$DEPLOY_ID" ]; then
+              STATUS=$(curl -s \\
+                -H "Authorization: Bearer \$GH_TOKEN" \\
+                -H "Accept: application/vnd.github+json" \\
+                "https://api.github.com/repos/\${{ github.repository }}/deployments/\$DEPLOY_ID/statuses")
+              PREVIEW_URL=$(echo "\$STATUS" | python3 -c "
+          import sys,json
+          statuses=json.load(sys.stdin)
+          for s in statuses:
+              if s.get('state') == 'success' and s.get('environment_url'):
+                  print(s['environment_url'])
+                  break
+          " 2>/dev/null || echo "")
+              if [ -n "\$PREVIEW_URL" ]; then
+                echo "preview_url=\$PREVIEW_URL" >> "\$GITHUB_OUTPUT"
+                break
+              fi
+            fi
+            echo "Attempt \$i/${attempts} — waiting ${interval}s..."
+            sleep ${interval}
+          done`;
+}
+
+function generateRailwayDetectionStep(config: DeploymentConfig, attempts: number, interval: number): string {
+  const railwayFallback = config.railwayProjectId
+    ? `
+            # Fallback: query Railway GraphQL API
+            if [ -n "\$RAILWAY_API_TOKEN" ]; then
+              RAILWAY_URL=$(curl -s -X POST https://backboard.railway.com/graphql/v2 \\
+                -H "Authorization: Bearer \$RAILWAY_API_TOKEN" \\
+                -H "Content-Type: application/json" \\
+                -d '{"query":"{ environments(projectId: \\"${config.railwayProjectId}\\") { edges { node { name deployments(first:1) { edges { node { staticUrl status } } } } } } }"}' \\
+                | python3 -c "
+          import sys,json
+          data=json.load(sys.stdin).get('data',{}).get('environments',{}).get('edges',[])
+          branch='\$BRANCH'.replace('claudopilot/','')
+          for e in data:
+              node=e.get('node',{})
+              if branch.lower() in node.get('name','').lower():
+                  deps=node.get('deployments',{}).get('edges',[])
+                  if deps and deps[0]['node'].get('status')=='SUCCESS':
+                      url=deps[0]['node'].get('staticUrl','')
+                      if url:
+                          print('https://'+url if not url.startswith('http') else url)
+                          break
+          " 2>/dev/null || echo "")
+              if [ -n "\$RAILWAY_URL" ]; then
+                PREVIEW_URL="\$RAILWAY_URL"
+                echo "preview_url=\$PREVIEW_URL" >> "\$GITHUB_OUTPUT"
+                break
+              fi
+            fi`
+    : "";
+
+  const envBlock = config.railwayProjectId
+    ? `
+          RAILWAY_API_TOKEN: \${{ secrets.RAILWAY_API_TOKEN }}`
+    : "";
+
+  return `
+      - name: Wait for Railway preview
+        if: steps.check.outputs.has_commits == 'true'
+        id: deployment
+        env:
+          GH_TOKEN: \${{ secrets.GH_PAT }}${envBlock}
+        run: |
+          echo "Waiting for Railway deployment on \$BRANCH..."
+          PREVIEW_URL=""
+          for i in $(seq 1 ${attempts}); do
+            DEPLOY=$(curl -s \\
+              -H "Authorization: Bearer \$GH_TOKEN" \\
+              -H "Accept: application/vnd.github+json" \\
+              "https://api.github.com/repos/\${{ github.repository }}/deployments?ref=\$BRANCH&per_page=1")
+            DEPLOY_ID=$(echo "\$DEPLOY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'] if d else '')" 2>/dev/null || echo "")
+            if [ -n "\$DEPLOY_ID" ]; then
+              STATUS=$(curl -s \\
+                -H "Authorization: Bearer \$GH_TOKEN" \\
+                -H "Accept: application/vnd.github+json" \\
+                "https://api.github.com/repos/\${{ github.repository }}/deployments/\$DEPLOY_ID/statuses")
+              PREVIEW_URL=$(echo "\$STATUS" | python3 -c "
+          import sys,json
+          statuses=json.load(sys.stdin)
+          for s in statuses:
+              if s.get('state') == 'success' and s.get('environment_url'):
+                  print(s['environment_url'])
+                  break
+          " 2>/dev/null || echo "")
+              if [ -n "\$PREVIEW_URL" ]; then
+                echo "preview_url=\$PREVIEW_URL" >> "\$GITHUB_OUTPUT"
+                break
+              fi
+            fi${railwayFallback}
+            echo "Attempt \$i/${attempts} — waiting ${interval}s..."
+            sleep ${interval}
+          done`;
+}
+
+function generateDeploymentDetectionStep(config: ClaudopilotConfig): string {
+  const deployment = config.deployment;
+  const timeout = deployment?.pollTimeout ?? 600;
+  const interval = deployment?.pollInterval ?? 20;
+  const attempts = Math.ceil(timeout / interval);
+
+  if (!deployment) {
+    // Backward compat: nextjs projects get Vercel detection
+    if (config.project.type === "nextjs") {
+      return generateVercelDetectionStep(attempts, interval);
+    }
+    return "";
+  }
+
+  switch (deployment.provider) {
+    case "none":
+      return "";
+    case "vercel":
+      return generateVercelDetectionStep(attempts, interval);
+    case "railway":
+      return generateRailwayDetectionStep(deployment, attempts, interval);
+    default:
+      return "";
+  }
 }
 
 function generateWorkerWorkflow(config: ClaudopilotConfig): string {
@@ -536,48 +675,14 @@ ${companionPrLogic}
 
           echo "all_prs=\$ALL_PRS" >> "\$GITHUB_OUTPUT"
 
-      - name: Wait for Vercel preview
-        if: steps.check.outputs.has_commits == 'true'
-        id: vercel
-        env:
-          GH_TOKEN: \${{ secrets.GH_PAT }}
-        run: |
-          echo "Waiting for Vercel deployment on \$BRANCH..."
-          PREVIEW_URL=""
-          for i in $(seq 1 30); do
-            DEPLOY=$(curl -s \\
-              -H "Authorization: Bearer \$GH_TOKEN" \\
-              -H "Accept: application/vnd.github+json" \\
-              "https://api.github.com/repos/\${{ github.repository }}/deployments?ref=\$BRANCH&per_page=1")
-            DEPLOY_ID=$(echo "\$DEPLOY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'] if d else '')" 2>/dev/null || echo "")
-            if [ -n "\$DEPLOY_ID" ]; then
-              STATUS=$(curl -s \\
-                -H "Authorization: Bearer \$GH_TOKEN" \\
-                -H "Accept: application/vnd.github+json" \\
-                "https://api.github.com/repos/\${{ github.repository }}/deployments/\$DEPLOY_ID/statuses")
-              PREVIEW_URL=$(echo "\$STATUS" | python3 -c "
-          import sys,json
-          statuses=json.load(sys.stdin)
-          for s in statuses:
-              if s.get('state') == 'success' and s.get('environment_url'):
-                  print(s['environment_url'])
-                  break
-          " 2>/dev/null || echo "")
-              if [ -n "\$PREVIEW_URL" ]; then
-                echo "preview_url=\$PREVIEW_URL" >> "\$GITHUB_OUTPUT"
-                break
-              fi
-            fi
-            echo "Attempt \$i/30 — waiting 20s..."
-            sleep 20
-          done
+${generateDeploymentDetectionStep(config)}
 
       - name: Post results to ClickUp
         if: steps.check.outputs.has_commits == 'true'
         env:
           PR_URL: \${{ steps.pr.outputs.pr_url }}
           ALL_PRS: \${{ steps.pr.outputs.all_prs }}
-          PREVIEW_URL: \${{ steps.vercel.outputs.preview_url }}
+          PREVIEW_URL: \${{ steps.deployment.outputs.preview_url }}
           IMPL_OUTCOME: \${{ needs.implement.outputs.outcome }}
           FAILURE_REASON: \${{ needs.implement.outputs.failure_reason }}
           RESET_INFO: \${{ needs.implement.outputs.reset_info }}

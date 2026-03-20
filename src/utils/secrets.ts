@@ -10,6 +10,7 @@ export interface StoredSecrets {
   GITHUB_PAT?: string;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
+  RAILWAY_API_TOKEN?: string;
 }
 
 const SECRET_KEYS: (keyof StoredSecrets)[] = [
@@ -18,6 +19,7 @@ const SECRET_KEYS: (keyof StoredSecrets)[] = [
   "GITHUB_PAT",
   "CLOUDFLARE_API_TOKEN",
   "CLOUDFLARE_ACCOUNT_ID",
+  "RAILWAY_API_TOKEN",
 ];
 
 export async function loadSecrets(

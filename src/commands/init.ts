@@ -17,6 +17,8 @@ import { installCodeRabbitConfig } from "../installers/coderabbit.js";
 import { installMcpServer } from "../installers/mcp-server.js";
 import type {
   ClaudopilotConfig,
+  DeploymentConfig,
+  DeploymentProvider,
   DomainLens,
   PMConfig,
   GitHubConfig,
@@ -106,7 +108,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 9 : 10;
+  const totalSteps = options.skipCloud ? 10 : 11;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -364,6 +366,12 @@ export async function init(options: InitOptions): Promise<void> {
 
   const brainstormConfig = await setupBrainstorm(existing?.brainstorm);
 
+  // ─── Deployment / Preview URLs ───
+  step++;
+  ui.step(step, totalSteps, "Preview deployments...");
+
+  const deploymentConfig = await setupDeployment(projectType, existing?.deployment);
+
   // ─── Install files ───
   step++;
   ui.step(step, totalSteps, "Installing project files...");
@@ -383,6 +391,7 @@ export async function init(options: InitOptions): Promise<void> {
       : undefined,
     redTeam: redTeamConfig,
     brainstorm: brainstormConfig,
+    deployment: deploymentConfig,
   };
 
   await saveConfig(config);
@@ -398,6 +407,9 @@ export async function init(options: InitOptions): Promise<void> {
           CLOUDFLARE_API_TOKEN: cloudflareConfig.apiToken,
           CLOUDFLARE_ACCOUNT_ID: cloudflareConfig.accountId,
         }
+      : {}),
+    ...(deploymentConfig?.provider === "railway" && deploymentConfig.railwayApiToken
+      ? { RAILWAY_API_TOKEN: deploymentConfig.railwayApiToken }
       : {}),
   });
   ui.success("Secrets saved to .claudopilot.env");
@@ -459,6 +471,25 @@ export async function init(options: InitOptions): Promise<void> {
       clickupSpinner.fail(`  Could not set CLICKUP_API_KEY: ${stderr.trim()}`);
     }
 
+    // Set Railway API token if configured
+    if (deploymentConfig?.provider === "railway" && deploymentConfig.railwayApiToken) {
+      const railwaySpinner = ui.spinner(`Setting RAILWAY_API_TOKEN on ${repoSlug}...`);
+      try {
+        execSync(
+          `gh secret set RAILWAY_API_TOKEN --repo ${repoSlug}`,
+          {
+            input: deploymentConfig.railwayApiToken,
+            env: { ...process.env, GH_TOKEN: githubConfig.pat },
+            stdio: ["pipe", "pipe", "pipe"],
+          }
+        );
+        railwaySpinner.succeed(`  RAILWAY_API_TOKEN set on ${repoSlug}`);
+      } catch (error: any) {
+        const stderr = error?.stderr?.toString?.() || error?.message || String(error);
+        railwaySpinner.fail(`  Could not set RAILWAY_API_TOKEN: ${stderr.trim()}`);
+      }
+    }
+
     // Create brainstorm-continue environment for approval gates
     if (config.brainstorm?.enabled) {
       const envSpinner = ui.spinner(`Creating brainstorm-continue environment on ${repoSlug}...`);
@@ -497,7 +528,7 @@ export async function init(options: InitOptions): Promise<void> {
 
 // ─── PM Setup ───
 
-async function setupClickUp(savedKey?: string, existing?: PMConfig): Promise<PMConfig> {
+export async function setupClickUp(savedKey?: string, existing?: PMConfig): Promise<PMConfig> {
   let apiKey: string;
   if (savedKey) {
     ui.success(`ClickUp API key found (${maskKey(savedKey)})`);
@@ -589,7 +620,7 @@ async function setupClickUp(savedKey?: string, existing?: PMConfig): Promise<PMC
 
 // ─── GitHub Setup ───
 
-async function setupGitHub(savedPat?: string, existing?: GitHubConfig): Promise<GitHubConfig & { pat: string; fetchedRepos: { name: string; full_name: string }[] }> {
+export async function setupGitHub(savedPat?: string, existing?: GitHubConfig): Promise<GitHubConfig & { pat: string; fetchedRepos: { name: string; full_name: string }[] }> {
   const detected = await detectGitHubRemote();
 
   let pat: string;
@@ -719,7 +750,7 @@ async function setupGitHub(savedPat?: string, existing?: GitHubConfig): Promise<
 
 // ─── Cloudflare Setup ───
 
-async function setupCloudflare(
+export async function setupCloudflare(
   savedToken?: string,
   savedAccountId?: string,
   existing?: CloudflareConfig
@@ -772,7 +803,7 @@ async function setupCloudflare(
 
 // ─── Red Team Setup ───
 
-async function setupRedTeam(anthropicKey: string, clickupApiKey: string, workspaceId: string, existing?: RedTeamConfig): Promise<RedTeamConfig> {
+export async function setupRedTeam(anthropicKey: string, clickupApiKey: string, workspaceId: string, existing?: RedTeamConfig): Promise<RedTeamConfig> {
   const maxRounds = await select({
     message: "Max red team iterations per feature:",
     choices: [
@@ -985,9 +1016,98 @@ async function setupRedTeam(anthropicKey: string, clickupApiKey: string, workspa
   return { maxRounds, blockingSeverity, domainLenses, blockedAssignee, blockedAssigneeUserId };
 }
 
+// ─── Deployment Setup ───
+
+export async function setupDeployment(
+  projectType: string,
+  existing?: DeploymentConfig
+): Promise<(DeploymentConfig & { railwayApiToken?: string }) | undefined> {
+  const configure = await confirm({
+    message: "Configure preview deployments?",
+    default: existing !== undefined || projectType === "nextjs",
+  });
+
+  if (!configure) {
+    return undefined;
+  }
+
+  const provider = await select<DeploymentProvider>({
+    message: "Deployment provider:",
+    choices: [
+      { name: "Vercel (auto-detected via GitHub Deployments API, no token needed)", value: "vercel" },
+      { name: "Railway", value: "railway" },
+      { name: "None (skip preview URLs)", value: "none" },
+    ],
+    default: existing?.provider ?? (projectType === "nextjs" ? "vercel" : "railway"),
+  });
+
+  if (provider === "none") {
+    return { provider: "none" };
+  }
+
+  if (provider === "vercel") {
+    ui.success("Vercel preview URLs will be detected via GitHub Deployments API (zero-config)");
+    return { provider: "vercel" };
+  }
+
+  // Railway setup
+  ui.hint([
+    "Railway supports two modes for preview URLs:",
+    "1. GitHub Deployments API — enable PR environments in Railway settings, no token needed",
+    "2. Railway GraphQL API — for branches without PRs, requires an API token",
+    "",
+    "You can use both: the workflow tries GitHub Deployments first, then falls back to the Railway API.",
+  ]);
+
+  let railwayApiToken: string | undefined;
+  let railwayProjectId: string | undefined;
+  let railwayServiceId: string | undefined;
+
+  const useRailwayApi = await confirm({
+    message: "Configure Railway API for active environment creation?",
+    default: !!existing?.railwayProjectId,
+  });
+
+  if (useRailwayApi) {
+    ui.hint([
+      "To create a Railway API token:",
+      "1. Go to railway.com → Account Settings → Tokens",
+      '2. Click "Create Token"',
+      "3. Copy the token",
+    ]);
+    railwayApiToken = await password({
+      message: "Railway API token:",
+    });
+
+    ui.hint([
+      "To find your Railway project ID:",
+      "1. Open your project in Railway",
+      "2. Go to Settings → General",
+      "3. Copy the Project ID",
+    ]);
+    railwayProjectId = await input({
+      message: "Railway project ID:",
+      default: existing?.railwayProjectId,
+    });
+
+    railwayServiceId = await input({
+      message: "Railway service ID (optional, for multi-service projects — leave empty to skip):",
+      default: existing?.railwayServiceId ?? "",
+    });
+    if (!railwayServiceId) railwayServiceId = undefined;
+  }
+
+  return {
+    provider: "railway",
+    railwayProjectId,
+    railwayServiceId,
+    railwayApiToken,
+  };
+}
+
 // ─── Brainstorm Setup ───
 
-async function setupBrainstorm(existing?: BrainstormConfig): Promise<BrainstormConfig | undefined> {
+export async function setupBrainstorm(existing?: BrainstormConfig): Promise<BrainstormConfig | undefined> {
   const enable = await confirm({
     message: "Enable brainstorm/ideation engine? (AI generates improvement ideas as ClickUp tasks)",
     default: existing?.enabled ?? true,
@@ -1057,7 +1177,7 @@ async function setupBrainstorm(existing?: BrainstormConfig): Promise<BrainstormC
 
 // ─── Status Customization ───
 
-async function customizeStatuses(existing?: StatusConfig): Promise<StatusConfig> {
+export async function customizeStatuses(existing?: StatusConfig): Promise<StatusConfig> {
   const defaults = existing ?? DEFAULT_STATUSES;
   const statuses: StatusConfig = { ...defaults };
 

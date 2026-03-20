@@ -163,6 +163,59 @@ export async function doctor(): Promise<void> {
     }
   }
 
+  // Check deployment provider
+  const deployment = config.deployment;
+  if (!deployment) {
+    if (config.project.type === "nextjs") {
+      ui.success("Deployment: Vercel (auto-detected for Next.js, via GitHub Deployments API)");
+      passed++;
+    } else {
+      ui.warn("No deployment provider configured (preview URLs disabled)");
+      warned++;
+    }
+  } else if (deployment.provider === "none") {
+    ui.success("Deployment: none (preview URLs disabled)");
+    passed++;
+  } else if (deployment.provider === "vercel") {
+    ui.success("Deployment: Vercel (via GitHub Deployments API)");
+    passed++;
+  } else if (deployment.provider === "railway") {
+    if (deployment.railwayProjectId) {
+      const railwayToken = secrets.RAILWAY_API_TOKEN;
+      if (railwayToken) {
+        const spinner = ui.spinner("Testing Railway API connection...");
+        try {
+          const res = await fetch("https://backboard.railway.com/graphql/v2", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${railwayToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ query: "{ me { email } }" }),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as { data?: { me?: { email?: string } } };
+            const email = data?.data?.me?.email;
+            spinner.succeed(`  Railway API: connected${email ? ` (${email})` : ""}`);
+            passed++;
+          } else {
+            spinner.fail(`  Railway API: HTTP ${res.status}`);
+            failed++;
+          }
+        } catch {
+          spinner.fail("  Railway API: connection failed");
+          failed++;
+        }
+      } else {
+        ui.warn("Railway configured with project ID but no RAILWAY_API_TOKEN in .claudopilot.env");
+        warned++;
+      }
+    } else {
+      ui.success("Deployment: Railway (via GitHub Deployments API only)");
+      passed++;
+    }
+  }
+
   // Check Cloudflare Worker
   if (config.cloudflare?.workerUrl) {
     const spinner = ui.spinner("Testing Cloudflare Worker...");

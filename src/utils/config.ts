@@ -39,6 +39,15 @@ export async function saveConfig(
           accountId: undefined,
         }
       : undefined,
+    deployment: config.deployment
+      ? {
+          provider: config.deployment.provider,
+          railwayProjectId: config.deployment.railwayProjectId,
+          railwayServiceId: config.deployment.railwayServiceId,
+          pollTimeout: config.deployment.pollTimeout,
+          pollInterval: config.deployment.pollInterval,
+        }
+      : undefined,
   };
 
   const configPath = getConfigPath(rootDir);
