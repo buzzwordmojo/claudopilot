@@ -223,7 +223,8 @@ export async function init(options: InitOptions): Promise<void> {
 
     const setupCf = await confirm({
       message:
-        "Deploy a Cloudflare Worker to bridge ClickUp webhooks → GitHub Actions?",
+        "Deploy a Cloudflare Worker to bridge ClickUp webhooks → GitHub Actions?\n" +
+        "  (Each project needs its own worker, but you can reuse the same Cloudflare account)",
       default: existing?.cloudflare !== undefined || true,
     });
 
@@ -231,7 +232,8 @@ export async function init(options: InitOptions): Promise<void> {
       cloudflareConfig = await setupCloudflare(
         secrets.CLOUDFLARE_API_TOKEN,
         secrets.CLOUDFLARE_ACCOUNT_ID,
-        existing?.cloudflare
+        existing?.cloudflare,
+        projectName
       );
 
       ui.info("Reusing your GitHub PAT from step 4 for webhook dispatch.");
@@ -503,6 +505,23 @@ export async function init(options: InitOptions): Promise<void> {
     } catch (error: any) {
       const stderr = error?.stderr?.toString?.() || error?.message || String(error);
       anthropicSpinner.fail(`  Could not set ANTHROPIC_API_KEY: ${stderr.trim()}`);
+    }
+
+    // Set GitHub PAT (used by workflows for checkout and gh CLI)
+    const ghPatSpinner = ui.spinner(`Setting GH_PAT on ${repoSlug}...`);
+    try {
+      execSync(
+        `gh secret set GH_PAT --repo ${repoSlug}`,
+        {
+          input: githubConfig.pat,
+          env: { ...process.env, GH_TOKEN: githubConfig.pat },
+          stdio: ["pipe", "pipe", "pipe"],
+        }
+      );
+      ghPatSpinner.succeed(`  GH_PAT set on ${repoSlug}`);
+    } catch (error: any) {
+      const stderr = error?.stderr?.toString?.() || error?.message || String(error);
+      ghPatSpinner.fail(`  Could not set GH_PAT: ${stderr.trim()}`);
     }
 
     // Set ClickUp API key (used by workflow to post comments on tasks)
@@ -804,7 +823,8 @@ export async function setupGitHub(savedPat?: string, existing?: GitHubConfig): P
 export async function setupCloudflare(
   savedToken?: string,
   savedAccountId?: string,
-  existing?: CloudflareConfig
+  existing?: CloudflareConfig,
+  projectName?: string
 ): Promise<CloudflareConfig> {
   let apiToken: string;
   if (savedToken) {
@@ -844,9 +864,12 @@ export async function setupCloudflare(
     });
   }
 
+  const slugifiedProject = projectName
+    ? projectName.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-")
+    : undefined;
   const workerName = await input({
     message: "Worker name:",
-    default: existing?.workerName ?? "claudopilot-webhook",
+    default: existing?.workerName ?? (slugifiedProject ? `claudopilot-${slugifiedProject}` : "claudopilot-webhook"),
   });
 
   return { apiToken, accountId, workerName };

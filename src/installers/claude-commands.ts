@@ -201,6 +201,11 @@ ${domainLenses ? `   Domain-specific:\n${domainLenses}` : ""}
    If there are no new human comments, proceed to DECISION.
 
 4. DECISION:
+   MINIMUM ROUNDS: You MUST complete at least one full cycle
+   (architect draft → red team review) before finalizing.
+   If this is your first pass and the red team has not yet
+   reviewed the spec, GO TO STEP 2 — do NOT skip to finalization.
+
    - If ANY ${severity.toUpperCase()}${severity !== "critical" ? " or above" : ""} findings exist:
      GO TO STEP 1.
 
@@ -288,6 +293,9 @@ ${config.assignees?.reviewerUserId ? `        - Assign reviewer using clickup_up
 RULES:
 - CRITICAL: You MUST use the MCP tools (clickup_get_task, clickup_update_task,
   clickup_create_task_comment, etc.) to interact with ClickUp. Do NOT use curl.
+- MINIMUM 1 FULL CYCLE: You must always run at least one architect
+  draft AND one red team review before finalizing — even for simple
+  bug fixes. No exceptions.
 - TURN BUDGET: You have a limited number of tool calls. Reserve at
   least 5 turns for finalization (writing description, posting summary,
   moving status). If you are on round 3+ and have no blocking findings,
