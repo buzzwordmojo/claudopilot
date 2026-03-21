@@ -126,6 +126,7 @@ program
   .command("update")
   .description("Re-install generated files from existing config")
   .option("--include-worker", "Also redeploy the Cloudflare Worker")
+  .option("--skip-self-update", "Skip pulling latest claudopilot (used internally)")
   .action(update);
 
 program

@@ -1,3 +1,5 @@
+import { execSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
 import { ui } from "../utils/ui.js";
 import { loadConfig, configExists } from "../utils/config.js";
 import { loadSecrets } from "../utils/secrets.js";
@@ -12,10 +14,87 @@ import { installMcpServer } from "../installers/mcp-server.js";
 
 interface UpdateOptions {
   includeWorker?: boolean;
+  skipSelfUpdate?: boolean;
+}
+
+/**
+ * Resolve the claudopilot repo root from the running script's location.
+ * tsup bundles everything into a single dist/cli.js, so repo root is one level up.
+ */
+function getRepoRoot(): string {
+  // process.argv[1] is the actual script path (e.g. /home/bob/.../claudopilot/dist/cli.js)
+  const scriptPath = process.argv[1];
+  return resolve(dirname(scriptPath), "..");
+}
+
+/**
+ * Pull latest claudopilot source, rebuild, and re-exec the update command
+ * with --skip-self-update so it doesn't loop.
+ */
+async function selfUpdate(repoRoot: string, args: string[]): Promise<boolean> {
+  const spinner = ui.spinner("Pulling latest claudopilot...");
+  try {
+    const pullOutput = execSync("git pull --rebase", {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    if (pullOutput === "Current branch main is up to date.") {
+      spinner.succeed("  claudopilot already up to date");
+      return false; // No changes, no need to re-exec
+    }
+
+    spinner.succeed(`  claudopilot updated`);
+  } catch (error: any) {
+    const stderr = error?.stderr?.toString?.() || error?.message || String(error);
+    spinner.fail(`  Failed to pull latest: ${stderr.trim()}`);
+    ui.warn("Continuing with current version...");
+    return false;
+  }
+
+  const buildSpinner = ui.spinner("Rebuilding claudopilot...");
+  try {
+    execSync("npm run build", {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    buildSpinner.succeed("  claudopilot rebuilt");
+  } catch (error: any) {
+    const stderr = error?.stderr?.toString?.() || error?.message || String(error);
+    buildSpinner.fail(`  Build failed: ${stderr.trim()}`);
+    ui.warn("Continuing with current version...");
+    return false;
+  }
+
+  // Re-exec with the freshly built CLI
+  const cliPath = resolve(repoRoot, "dist", "cli.js");
+  const reExecArgs = ["update", "--skip-self-update", ...args];
+  ui.info("Re-running update with latest version...\n");
+  try {
+    execSync(`node ${cliPath} ${reExecArgs.join(" ")}`, {
+      cwd: process.cwd(),
+      stdio: "inherit",
+    });
+  } catch {
+    // Exit code propagated via stdio inherit
+  }
+  return true; // We re-exec'd, caller should exit
 }
 
 export async function update(options: UpdateOptions): Promise<void> {
   ui.header("claudopilot update");
+
+  // Self-update unless --skip-self-update was passed (to avoid infinite loop)
+  if (!options.skipSelfUpdate) {
+    const repoRoot = getRepoRoot();
+    const passthrough: string[] = [];
+    if (options.includeWorker) passthrough.push("--include-worker");
+
+    const reExeced = await selfUpdate(repoRoot, passthrough);
+    if (reExeced) return; // Fresh version already ran
+  }
 
   if (!configExists()) {
     ui.error(
