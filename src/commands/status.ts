@@ -7,7 +7,7 @@ import { loadConfig, getConfigPath } from "../utils/config.js";
 import { loadSecrets, maskKey } from "../utils/secrets.js";
 
 const require = createRequire(import.meta.url);
-const { version } = require("../../package.json");
+const pkg = require("../package.json") as { version: string };
 
 export async function status(): Promise<void> {
   ui.banner();
@@ -15,9 +15,9 @@ export async function status(): Promise<void> {
   // ── Version & Install ──────────────────────────────
   ui.header("Version & Install");
 
-  console.log(`  ${chalk.bold("Version:")}       ${version}`);
+  console.log(`  ${chalk.bold("Version:")}       ${pkg.version}`);
   console.log(`  ${chalk.bold("Node:")}          ${process.version}`);
-  console.log(`  ${chalk.bold("CLI path:")}      ${resolve(join(import.meta.dirname, "../.."))}`);
+  console.log(`  ${chalk.bold("CLI path:")}      ${resolve(join(import.meta.dirname, ".."))}`);
   console.log(`  ${chalk.bold("Working dir:")}   ${process.cwd()}`);
 
   // ── Config ─────────────────────────────────────────
