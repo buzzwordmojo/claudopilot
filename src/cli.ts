@@ -119,7 +119,7 @@ program
 
 program
   .command("status")
-  .description("Show current task pipeline status from your PM tool")
+  .description("Show version, install situation, and config decisions")
   .action(status);
 
 program
