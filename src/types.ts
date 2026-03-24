@@ -34,6 +34,7 @@ export interface ClaudopilotConfig {
   assignees?: AssigneeConfig;
   autoApprove?: AutoApproveConfig;
   sync?: SyncConfig;
+  feedback?: FeedbackConfig;
 }
 
 export interface ProjectConfig {
@@ -145,6 +146,10 @@ export interface DreamConfig {
   schedule?: string;           // cron expression for periodic runs
 }
 
+export interface FeedbackConfig {
+  enabled: boolean;
+}
+
 export interface SyncConfig {
   enabled: boolean;
   boards: Record<string, string>;  // name → listId
@@ -160,7 +165,9 @@ export interface SyncRule {
 
 export interface SyncTrigger {
   board: string;    // references boards key
-  event?: "status_changed" | "created" | "tag_added" | "tag_removed";  // defaults to "status_changed"
+  source?: "clickup" | "github";  // defaults to "clickup"
+  event?: "status_changed" | "created" | "tag_added" | "tag_removed"
+    | "pr_review_submitted" | "check_run_failed" | "pr_comment_mention";  // includes GitHub PR events
   status?: string;  // status value to trigger on (required for status_changed)
   tag?: string;     // tag name to trigger on (required for tag_added/tag_removed)
 }
@@ -173,7 +180,8 @@ export type SyncAction =
   | { assign_linked: { board: string; userId: string } }
   | { unassign_linked: { board: string; userId?: string } }
   | { tag_linked: { board: string; tag: string } }
-  | { dispatch: { prompt: string } };
+  | { dispatch: { prompt: string } }
+  | { mention: { userId: string; text: string } };
 
 export const DEFAULT_IMPROVE_LENSES = [
   "code quality",

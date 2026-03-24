@@ -264,6 +264,83 @@ function generateDeploymentDetectionStep(config: ClaudopilotConfig): string {
   }
 }
 
+function generateAuthRefreshStep(): string {
+  return `
+      - name: Refresh Claude credentials if needed
+        env:
+          GH_TOKEN: \${{ secrets.GH_PAT }}
+        run: |
+          CREDS_FILE="\$HOME/.claude/.credentials.json"
+          if [ ! -f "\$CREDS_FILE" ]; then
+            echo "No credentials file found"
+            exit 0
+          fi
+
+          # Check expiration
+          EXPIRES_AT=\$(python3 -c "
+          import json
+          with open('\$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('expiresAt', 0))
+          else:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+          NOW_MS=\$(python3 -c "import time; print(int(time.time() * 1000))")
+          BUFFER_MS=300000  # 5 minutes
+
+          if [ "\$EXPIRES_AT" -gt "\$((NOW_MS + BUFFER_MS))" ] 2>/dev/null; then
+            echo "Token valid — expires in \$(( (EXPIRES_AT - NOW_MS) / 60000 )) minutes"
+            exit 0
+          fi
+
+          echo "Token expired or expiring soon — attempting refresh..."
+
+          # Extract refresh token
+          REFRESH_TOKEN=\$(python3 -c "
+          import json
+          with open('\$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('refreshToken', ''))
+          " 2>/dev/null || echo "")
+
+          if [ -z "\$REFRESH_TOKEN" ]; then
+            echo "::warning::No refresh token found — cannot auto-refresh"
+            exit 0
+          fi
+
+          # Refresh the token
+          RESPONSE=\$(curl -s -X POST "https://api.anthropic.com/v1/oauth/token" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"grant_type\\":\\"refresh_token\\",\\"refresh_token\\":\\"\$REFRESH_TOKEN\\"}")
+
+          NEW_ACCESS=\$(echo "\$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))" 2>/dev/null || echo "")
+
+          if [ -z "\$NEW_ACCESS" ]; then
+            echo "::warning::Token refresh failed — will attempt run with existing credentials"
+            exit 0
+          fi
+
+          # Write refreshed credentials
+          echo "\$RESPONSE" | python3 -c "
+          import json, sys
+          resp = json.load(sys.stdin)
+          creds = {'claudeAiOauth': resp}
+          with open('\$CREDS_FILE', 'w') as f:
+              json.dump(creds, f)
+          "
+
+          # Update GitHub secret so future runs use the fresh token
+          cat "\$CREDS_FILE" | gh secret set CLAUDE_LONG_LIVED_TOKEN --repo "\$GITHUB_REPOSITORY"
+
+          echo "Token refreshed successfully"
+`;
+}
+
 function generateWorkerWorkflow(config: ClaudopilotConfig): string {
   const companions = getCompanionRepos(config);
   const hasCompanions = companions.length > 0;
@@ -428,7 +505,7 @@ ${planCompanionCheckouts}
         run: |
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
-
+${generateAuthRefreshStep()}
       - name: Inject secrets into MCP config
         run: |
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
@@ -437,6 +514,7 @@ ${planCompanionCheckouts}
         id: claude
         continue-on-error: true
         run: |
+          set -o pipefail
           export ARGUMENTS="\$TASK_ID"
           # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
           PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/plan-feature.md)
@@ -448,9 +526,11 @@ ${planCompanionCheckouts}
 
       - name: Detect failure reason
         id: detect
-        if: steps.claude.outcome == 'failure'
+        if: always() && steps.claude.outcome == 'failure'
         run: |
-          if grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=auth_expired" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
             RESET_INFO=$(grep -oiE "resets [0-9]+[ap]m \\([A-Z]+\\)" /tmp/claude-output.log 2>/dev/null | head -1 || echo "")
             echo "reset_info=\$RESET_INFO" >> "\$GITHUB_OUTPUT"
@@ -459,7 +539,7 @@ ${planCompanionCheckouts}
           fi
 
       - name: Fail if Claude failed
-        if: steps.claude.outcome == 'failure'
+        if: always() && steps.claude.outcome == 'failure'
         run: exit 1
 
   plan-complete:
@@ -471,6 +551,7 @@ ${planCompanionCheckouts}
     steps:
       - name: Post result
         run: |
+          FAILURE="\${{ needs.plan.outputs.failure_reason }}"
           if [ "\${{ needs.plan.result }}" = "success" ]; then
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
@@ -480,7 +561,16 @@ ${planCompanionCheckouts}
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"awaiting approval"}'
-          elif [ "\${{ needs.plan.outputs.failure_reason }}" = "token_exhausted" ]; then
+          elif [ "\$FAILURE" = "auth_expired" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"🔑 [CLAUDOPILOT] Planning failed — Claude authentication expired. Run \`claudopilot auth\` to refresh credentials, then move task back to Planning."}'
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"status":"blocked"}'
+          elif [ "\$FAILURE" = "token_exhausted" ]; then
             RESET="\${{ needs.plan.outputs.reset_info }}"
             MSG="Planning paused — Claude token/rate limit reached."
             [ -n "\$RESET" ] && MSG="\$MSG \$RESET."
@@ -504,6 +594,7 @@ ${planCompanionCheckouts}
   # ═══════════════════════════════════════════
   # IMPLEMENTATION
   # ═══════════════════════════════════════════
+
 
   impl-setup:
     if: github.event.client_payload.status == 'approved'
@@ -573,7 +664,7 @@ ${implCompanionCheckouts}
         run: |
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
-
+${generateAuthRefreshStep()}
       - name: Inject secrets into MCP config
         run: |
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
@@ -584,6 +675,7 @@ ${implCompanionCheckouts}
         env:
           GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
+          set -o pipefail
           export ARGUMENTS="\$TASK_ID"
           # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
           PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/implement.md)
@@ -595,9 +687,11 @@ ${implCompanionCheckouts}
 
       - name: Detect failure reason
         id: detect
-        if: steps.claude.outcome == 'failure'
+        if: always() && steps.claude.outcome == 'failure'
         run: |
-          if grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=auth_expired" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
             RESET_INFO=$(grep -oiE "resets [0-9]+[ap]m \\([A-Z]+\\)" /tmp/claude-output.log 2>/dev/null | head -1 || echo "")
             echo "reset_info=\$RESET_INFO" >> "\$GITHUB_OUTPUT"
@@ -724,6 +818,15 @@ ${generateDeploymentDetectionStep(config)}
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"in review"}'
+          elif [ "\$FAILURE_REASON" = "auth_expired" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"🔑 [CLAUDOPILOT] Implementation failed — Claude authentication expired. Run \`claudopilot auth\` to refresh credentials, then move task back to Approved."}'
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"status":"blocked"}'
           elif [ "\$FAILURE_REASON" = "token_exhausted" ]; then
             MSG="Implementation paused — Claude token/rate limit reached."
             [ -n "\$RESET_INFO" ] && MSG="\$MSG \$RESET_INFO."
@@ -745,6 +848,174 @@ ${generateDeploymentDetectionStep(config)}
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"blocked"}'
+          fi
+
+  # ═══════════════════════════════════════════
+  # FIX PR FEEDBACK
+  # ═══════════════════════════════════════════
+
+  fix-feedback:
+    if: github.event.client_payload.status == 'fixing'
+    name: 🔧 Fix PR Feedback
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ env.BRANCH }}
+          fetch-depth: 0
+          token: \${{ secrets.GH_PAT }}
+
+      - name: Setup git
+        run: |
+          git config user.name "${githubConfig.commitName ?? "claudopilot"}"
+          git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+${generateAuthRefreshStep()}
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Collect PR feedback
+        id: feedback
+        env:
+          GH_TOKEN: \${{ secrets.GH_PAT }}
+        run: |
+          BRANCH="\${{ env.BRANCH }}"
+          PR_NUMBER="\${{ github.event.client_payload.pr_number }}"
+
+          # Find PR number if not provided
+          if [ -z "\$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list --head "\$BRANCH" --json number -q '.[0].number' 2>/dev/null || echo "")
+          fi
+
+          if [ -z "\$PR_NUMBER" ]; then
+            echo "No PR found for branch \$BRANCH"
+            echo "has_feedback=false" >> "\$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          REPO="\${{ github.repository }}"
+
+          # Fetch reviews
+          REVIEWS=$(gh api "repos/\$REPO/pulls/\$PR_NUMBER/reviews" --paginate 2>/dev/null || echo "[]")
+
+          # Fetch PR comments
+          COMMENTS=$(gh api "repos/\$REPO/issues/\$PR_NUMBER/comments" --paginate 2>/dev/null || echo "[]")
+
+          # Fetch inline review comments
+          REVIEW_COMMENTS=$(gh api "repos/\$REPO/pulls/\$PR_NUMBER/comments" --paginate 2>/dev/null || echo "[]")
+
+          # Fetch check runs
+          HEAD_SHA=$(gh pr view "\$PR_NUMBER" --json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+          CHECK_RUNS="[]"
+          CHECK_FAILURES="[]"
+          if [ -n "\$HEAD_SHA" ]; then
+            CHECK_RUNS=$(gh api "repos/\$REPO/commits/\$HEAD_SHA/check-runs" --jq '.check_runs | map({name, status, conclusion, html_url})' 2>/dev/null || echo "[]")
+            CHECK_FAILURES=$(gh api "repos/\$REPO/commits/\$HEAD_SHA/check-runs" --jq '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | {name, conclusion, html_url, output: {title: .output.title, summary: .output.summary}}]' 2>/dev/null || echo "[]")
+          fi
+
+          # Build feedback JSON
+          python3 -c "
+          import json, sys
+          feedback = {
+              'pr_number': int('\$PR_NUMBER'),
+              'reviews': json.loads(''''\$REVIEWS'''),
+              'comments': json.loads(''''\$COMMENTS'''),
+              'review_comments': json.loads(''''\$REVIEW_COMMENTS'''),
+              'check_runs': json.loads(''''\$CHECK_RUNS'''),
+              'check_failures': json.loads(''''\$CHECK_FAILURES''')
+          }
+          with open('/tmp/pr-feedback.json', 'w') as f:
+              json.dump(feedback, f, indent=2)
+          # Determine if there's actionable feedback
+          has = (
+              len(feedback['review_comments']) > 0 or
+              len(feedback['check_failures']) > 0 or
+              any(r.get('state') == 'changes_requested' for r in feedback['reviews']) or
+              len(feedback['comments']) > 0
+          )
+          print('true' if has else 'false')
+          " > /tmp/has_feedback.txt
+
+          echo "has_feedback=$(cat /tmp/has_feedback.txt)" >> "\$GITHUB_OUTPUT"
+
+      - name: Run fix-feedback
+        if: steps.feedback.outputs.has_feedback == 'true'
+        id: claude
+        continue-on-error: true
+        env:
+          GH_TOKEN: \${{ secrets.GH_PAT }}
+          MENTION_PROMPT: \${{ github.event.client_payload.mention_prompt }}
+        run: |
+          set -o pipefail
+          export ARGUMENTS="\$TASK_ID"
+          PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/fix-feedback.md)
+          claude -p "\$PROMPT" \\
+            --max-turns 40 \\
+            --verbose \\
+            --mcp-config .mcp.json \\
+            --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect failure reason
+        id: detect
+        if: always() && steps.claude.outcome == 'failure'
+        run: |
+          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=auth_expired" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
+          else
+            echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
+          fi
+
+      - name: Push fixes
+        if: steps.feedback.outputs.has_feedback == 'true'
+        run: |
+          git checkout -- .github/workflows/ 2>/dev/null || true
+          git checkout -- .claude/commands/ 2>/dev/null || true
+          git add -A
+          git diff --cached --quiet || git commit -m "WIP: uncommitted feedback fixes"
+          git push origin "\$BRANCH"
+
+      - name: Post summary to ClickUp
+        if: always()
+        env:
+          FAILURE_REASON: \${{ steps.detect.outputs.failure_reason }}
+        run: |
+          if [ "\${{ steps.feedback.outputs.has_feedback }}" != "true" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"🔧 [CLAUDOPILOT] No actionable PR feedback found."}'
+          elif [ -f /tmp/feedback-summary.txt ]; then
+            SUMMARY=$(cat /tmp/feedback-summary.txt | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))' 2>/dev/null || echo '""')
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d "{\\"comment_text\\":\\"🔧 [CLAUDOPILOT] PR feedback addressed:\\\\n\\\\n\$SUMMARY\\"}"
+          elif [ "\$FAILURE_REASON" = "auth_expired" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"🔑 [CLAUDOPILOT] Fix feedback failed — Claude authentication expired."}'
+          elif [ "\$FAILURE_REASON" = "token_exhausted" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Fix feedback paused — Claude token/rate limit reached."}'
+          else
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"❌ [CLAUDOPILOT] Fix feedback failed — check GitHub Actions logs."}'
           fi
 `;
 }
@@ -769,7 +1040,7 @@ ${companionCheckouts}
         run: |
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
-
+${generateAuthRefreshStep()}
       - name: Inject secrets into MCP config
         run: |
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json`;
@@ -863,6 +1134,7 @@ ${commonSteps}
         id: claude
         continue-on-error: true
         run: |
+          set -o pipefail
           LENSES="\${{ github.event.inputs.lenses }}"
           [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
           PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/improve.md)
@@ -902,6 +1174,7 @@ ${commonSteps}
         id: claude
         continue-on-error: true
         run: |
+          set -o pipefail
           LENSES="\${{ github.event.inputs.lenses }}"
           [ -z "\$LENSES" ] && LENSES="${defaultLensesStr}"
           PROMPT=$(sed "s|\\$ARGUMENTS|\$LENSES|g" .claude/commands/improve.md)
@@ -959,7 +1232,7 @@ ${companionCheckouts}
         run: |
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
-
+${generateAuthRefreshStep()}
       - name: Inject secrets into MCP config
         run: |
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
@@ -968,6 +1241,7 @@ ${companionCheckouts}
         id: claude
         continue-on-error: true
         run: |
+          set -o pipefail
           COMPETITORS="\${{ github.event.inputs.competitors }}"
           PROMPT=$(sed "s|\\$ARGUMENTS|\$COMPETITORS|g" .claude/commands/competitors.md)
           claude -p "\$PROMPT" \\
@@ -1041,7 +1315,7 @@ ${companionCheckouts}
         run: |
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
-
+${generateAuthRefreshStep()}
       - name: Inject secrets into MCP config
         run: |
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
@@ -1050,6 +1324,7 @@ ${companionCheckouts}
         id: claude
         continue-on-error: true
         run: |
+          set -o pipefail
           PROMPT=$(cat .claude/commands/dream.md)
           claude -p "\$PROMPT" \\
             --max-turns 40 \\
@@ -1106,7 +1381,7 @@ ${companionCheckouts}
         run: |
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
-
+${generateAuthRefreshStep()}
       - name: Inject secrets into MCP config
         run: |
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
@@ -1119,6 +1394,7 @@ ${companionCheckouts}
           RULE_NAME: \${{ github.event.client_payload.rule_name }}
           TASK_NAME: \${{ github.event.client_payload.task_name }}
         run: |
+          set -o pipefail
           CONTEXT="Task ID: \$TASK_ID\\nTask Name: \$TASK_NAME\\nRule: \$RULE_NAME\\n\\n"
           FULL_PROMPT="\$CONTEXT\$SYNC_PROMPT"
           claude -p "\$FULL_PROMPT" \\

@@ -27,6 +27,7 @@ import type {
   CloudflareConfig,
   RedTeamConfig,
   ImproveConfig,
+  FeedbackConfig,
   AssigneeConfig,
   AutoApproveConfig,
   RepoConfig,
@@ -115,7 +116,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 15 : 16;
+  const totalSteps = options.skipCloud ? 16 : 18;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -213,6 +214,12 @@ export async function init(options: InitOptions): Promise<void> {
 
   const syncConfig = await setupSync(pmConfig.apiKey!, pmConfig.spaceId!, pmConfig.workspaceId!, existing?.sync);
 
+  // ─── PR Feedback Cycle ───
+  step++;
+  ui.step(step, totalSteps, "PR feedback cycle...");
+
+  const feedbackConfig = await setupFeedback(existing?.feedback);
+
   // ─── Deploy Cloudflare Worker ───
   let cloudflareConfig: CloudflareConfig | undefined;
   let workerUrl: string | undefined;
@@ -262,6 +269,65 @@ export async function init(options: InitOptions): Promise<void> {
           webhookEvents
         );
         ui.success("ClickUp webhook created → Cloudflare Worker → GitHub Actions");
+
+        // ─── Create GitHub webhook for PR feedback ───
+        if (workerUrl && feedbackConfig?.enabled) {
+          step++;
+          ui.step(step, totalSteps, "Creating GitHub webhook for PR feedback...");
+
+          const repoSlug = `${githubConfig.owner}/${githubConfig.repos[0]}`;
+          const webhookSecret = cloudflareConfig.apiToken; // reuse as shared secret
+          const ghWebhookUrl = `${workerUrl}?secret=${webhookSecret}`;
+          const { execSync } = await import("node:child_process");
+
+          const ghWebhookSpinner = ui.spinner(`Checking existing GitHub webhooks on ${repoSlug}...`);
+          try {
+            // Check if a webhook already exists for this Worker URL
+            const existingHooksRaw = execSync(
+              `gh api repos/${repoSlug}/hooks`,
+              {
+                env: { ...process.env, GH_TOKEN: githubConfig.pat },
+                stdio: ["pipe", "pipe", "pipe"],
+              }
+            ).toString();
+            const existingHooks = JSON.parse(existingHooksRaw) as { id: number; config: { url?: string } }[];
+            const alreadyExists = existingHooks.some(
+              (h) => h.config?.url && h.config.url.startsWith(workerUrl!)
+            );
+
+            if (alreadyExists) {
+              ghWebhookSpinner.succeed(`  GitHub webhook already exists for ${workerUrl}`);
+            } else {
+              ghWebhookSpinner.succeed("  No existing webhook found — creating...");
+              const createSpinner = ui.spinner(`Creating GitHub webhook on ${repoSlug}...`);
+              try {
+                execSync(
+                  `gh api repos/${repoSlug}/hooks -X POST ` +
+                  `-f name=web ` +
+                  `-f 'config[url]=${ghWebhookUrl}' ` +
+                  `-f config[content_type]=json ` +
+                  `-f[] events=pull_request_review ` +
+                  `-f[] events=check_run ` +
+                  `-f[] events=issue_comment ` +
+                  `-f active=true`,
+                  {
+                    env: { ...process.env, GH_TOKEN: githubConfig.pat },
+                    stdio: ["pipe", "pipe", "pipe"],
+                  }
+                );
+                createSpinner.succeed(`  GitHub webhook created on ${repoSlug} → ${workerUrl}`);
+              } catch (whError: any) {
+                const stderr = whError?.stderr?.toString?.() || whError?.message || String(whError);
+                createSpinner.fail(`  Could not create GitHub webhook: ${stderr.trim()}`);
+                ui.warn("You can create the webhook manually in GitHub repo settings → Webhooks.");
+              }
+            }
+          } catch (listError: any) {
+            const stderr = listError?.stderr?.toString?.() || listError?.message || String(listError);
+            ghWebhookSpinner.fail(`  Could not list GitHub webhooks: ${stderr.trim()}`);
+            ui.warn("You can create the webhook manually in GitHub repo settings → Webhooks.");
+          }
+        }
       } catch (error) {
         ui.error(`Cloudflare deployment failed: ${error}`);
         ui.warn("You can set this up later with: claudopilot init --skip-cloud=false");
@@ -441,6 +507,7 @@ export async function init(options: InitOptions): Promise<void> {
     improve: improveConfig,
     competitors: competitorsConfig,
     dream: dreamConfig,
+    feedback: feedbackConfig,
     deployment: deploymentConfig,
     assignees: assigneesConfig,
     autoApprove: autoApproveConfig,
@@ -1439,6 +1506,23 @@ export async function setupDream(existing?: DreamConfig): Promise<DreamConfig | 
   return { enabled: true, schedule };
 }
 
+// ─── Feedback Setup ───
+
+export async function setupFeedback(existing?: FeedbackConfig): Promise<FeedbackConfig | undefined> {
+  const enabled = await confirm({
+    message: "Enable PR feedback cycle? (AI reads and fixes CodeRabbit/security/CI feedback on PRs)",
+    default: existing?.enabled ?? true,
+  });
+
+  if (!enabled) {
+    return undefined;
+  }
+
+  ui.success("PR feedback cycle enabled");
+
+  return { enabled: true };
+}
+
 // ─── Sync Setup ───
 
 export async function setupSync(clickupApiKey: string, spaceId: string, workspaceId: string, existing?: SyncConfig): Promise<SyncConfig | undefined> {
@@ -1594,6 +1678,7 @@ export async function setupSync(clickupApiKey: string, spaceId: string, workspac
           { name: "Add tag to linked task", value: "tag_linked" },
           { name: "Create task link", value: "create_link" },
           { name: "Dispatch to Claude (complex reasoning)", value: "dispatch" },
+          { name: "Mention user in comment on linked task", value: "mention" },
         ],
       });
 
@@ -1691,6 +1776,26 @@ export async function setupSync(clickupApiKey: string, spaceId: string, workspac
           message: "Claude prompt (what should Claude do?):",
         });
         actions.push({ dispatch: { prompt } });
+      } else if (actionType === "mention") {
+        const targetBoard = await select({
+          message: "Target board:",
+          choices: boardNames.filter((b) => b !== triggerBoard).map((b) => ({ name: b, value: b })),
+        });
+        let userId: string;
+        try {
+          const members = await adapter.getMembers(config_workspaceId);
+          userId = await select({
+            message: "User to mention:",
+            choices: members.map((m) => ({ name: `${m.username} (${m.email})`, value: m.id })),
+          });
+        } catch {
+          userId = await input({ message: "ClickUp user ID to mention:" });
+        }
+        const text = await input({
+          message: "Comment text (supports {{taskName}}, {{status}} placeholders):",
+          default: "Hey, {{taskName}} moved to {{status}} — please take a look.",
+        });
+        actions.push({ mention: { userId, text } });
       }
 
       addActions = await confirm({ message: "Add another action to this rule?", default: false });

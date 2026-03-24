@@ -20,6 +20,115 @@ export default {
       return new Response('Unauthorized', { status: 401 });
     }
 
+    // ─── GitHub webhook handler ───
+    const ghEvent = request.headers.get('X-GitHub-Event');
+    if (ghEvent) {
+      const ghPayload = await request.json();
+      const CI_USER = 'github-actions[bot]';
+
+      // Determine actor
+      const actor = ghPayload.sender?.login || '';
+      if (actor === 'github-actions[bot]' || actor === CI_USER) {
+        return new Response(JSON.stringify({ ignored: true, reason: 'ci-actor' }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      let ghEventType = null;
+      let branch = null;
+      let prNumber = null;
+      let reviewer = null;
+      let mentionPrompt = null;
+
+      if (ghEvent === 'pull_request_review' && ghPayload.action === 'submitted') {
+        ghEventType = 'pr_review_submitted';
+        branch = ghPayload.pull_request?.head?.ref || '';
+        prNumber = ghPayload.pull_request?.number;
+        reviewer = ghPayload.review?.user?.login || '';
+      } else if (ghEvent === 'check_run' && ghPayload.action === 'completed' && ghPayload.check_run?.conclusion === 'failure') {
+        ghEventType = 'check_run_failed';
+        const branches = ghPayload.check_run?.pull_requests || [];
+        if (branches.length > 0) {
+          branch = branches[0].head?.ref || '';
+          prNumber = branches[0].number;
+        }
+      } else if (ghEvent === 'issue_comment' && ghPayload.action === 'created' && ghPayload.issue?.pull_request) {
+        // Comment on a PR — fetch the PR to get branch
+        const prUrl = ghPayload.issue.pull_request.url;
+        try {
+          const prRes = await fetch(prUrl, {
+            headers: {
+              Authorization: 'token ${githubPat}',
+              Accept: 'application/vnd.github.v3+json',
+              'User-Agent': 'claudopilot-webhook',
+            },
+          });
+          if (prRes.ok) {
+            const prData = await prRes.json();
+            branch = prData.head?.ref || '';
+            prNumber = prData.number;
+          }
+        } catch (e) {
+          // Could not fetch PR
+        }
+        ghEventType = 'pr_comment_mention';
+        mentionPrompt = ghPayload.comment?.body || '';
+      }
+
+      if (!ghEventType || !branch) {
+        return new Response(JSON.stringify({ ignored: true, reason: 'unhandled-gh-event' }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Only process claudopilot/* branches
+      if (!branch.startsWith('claudopilot/')) {
+        return new Response(JSON.stringify({ ignored: true, reason: 'non-claudopilot-branch', branch }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Extract task ID from branch name: claudopilot/{taskId} or claudopilot/{taskId}-slug
+      const branchSuffix = branch.replace('claudopilot/', '');
+      const ghTaskId = branchSuffix.split('-')[0] || branchSuffix;
+
+      // Dispatch to GitHub Actions
+      const ghDispatchRes = await fetch(
+        'https://api.github.com/repos/${githubRepo}/dispatches',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'token ${githubPat}',
+            Accept: 'application/vnd.github.v3+json',
+            'User-Agent': 'claudopilot-webhook',
+          },
+          body: JSON.stringify({
+            event_type: 'clickup-task',
+            client_payload: {
+              task_id: ghTaskId,
+              branch: branch,
+              pr_number: prNumber,
+              event_type: ghEventType,
+              reviewer: reviewer || '',
+              mention_prompt: mentionPrompt || '',
+              status: 'fixing',
+            },
+          }),
+        }
+      );
+
+      if (!ghDispatchRes.ok) {
+        const body = await ghDispatchRes.text();
+        return new Response('GitHub dispatch failed: ' + body, { status: 500 });
+      }
+
+      return new Response(
+        JSON.stringify({ dispatched: true, source: 'github', event_type: ghEventType, task_id: ghTaskId, branch }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ─── ClickUp webhook handler ───
     const payload = await request.json();
     const taskId = payload.task_id;
     const event = payload.event;
@@ -337,6 +446,32 @@ export default {
                 }
               );
               results.sync.push({ action: 'dispatch', rule: rule.name });
+            } catch (e) {
+              // Continue processing
+            }
+          }
+
+          if (action.mention) {
+            const mentionText = (action.mention.text || '')
+              .replace(/\\{\\{status\\}\\}/g, newStatus || '')
+              .replace(/\\{\\{taskName\\}\\}/g, taskData.name || '');
+            try {
+              await fetch(
+                'https://api.clickup.com/api/v2/task/' + taskId + '/comment',
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: '${clickupApiKey}',
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    comment_text: mentionText,
+                    notify_all: false,
+                    assignee: Number(action.mention.userId),
+                  }),
+                }
+              );
+              results.sync.push({ action: 'mention', task: taskId, userId: action.mention.userId });
             } catch (e) {
               // Continue processing
             }

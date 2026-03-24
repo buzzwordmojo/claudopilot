@@ -40,18 +40,12 @@ if echo "$MSG" | grep -qE '^chore: bump version to '; then
 fi
 
 # --- Determine bump type ---
+# Pre-1.0: all conventional commits bump patch only
 BUMP=""
 
-# Check for breaking changes (major)
-if echo "$MSG" | grep -qiE '^[a-z]+(\(.+\))?!:'; then
-  BUMP="major"
+if echo "$MSG" | grep -qE '^(feat|fix|perf)(\(.+\))?\!?:'; then
+  BUMP="patch"
 elif echo "$MSG" | grep -qE 'BREAKING CHANGE'; then
-  BUMP="major"
-# Check for features (minor)
-elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
-  BUMP="minor"
-# Check for fixes and perf (patch)
-elif echo "$MSG" | grep -qE '^(fix|perf)(\(.+\))?:'; then
   BUMP="patch"
 fi
 
