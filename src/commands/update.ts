@@ -1,5 +1,7 @@
 import { execSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
 import { ui } from "../utils/ui.js";
 import { loadConfig, configExists } from "../utils/config.js";
 import { loadSecrets } from "../utils/secrets.js";
@@ -12,6 +14,11 @@ import { installCodeRabbitConfig } from "../installers/coderabbit.js";
 import { deployCloudflareWorker } from "../installers/cloudflare-worker.js";
 import { installMcpServer } from "../installers/mcp-server.js";
 
+const PKG_NAME = "@buzzwordmojo/claudopilot";
+
+const require = createRequire(import.meta.url);
+const { version: currentVersion } = require("../../package.json");
+
 interface UpdateOptions {
   includeWorker?: boolean;
   skipSelfUpdate?: boolean;
@@ -22,16 +29,23 @@ interface UpdateOptions {
  * tsup bundles everything into a single dist/cli.js, so repo root is one level up.
  */
 function getRepoRoot(): string {
-  // process.argv[1] is the actual script path (e.g. /home/bob/.../claudopilot/dist/cli.js)
-  const scriptPath = process.argv[1];
+  // Resolve symlinks (e.g. /usr/bin/claudopilot -> .../claudopilot/dist/cli.js)
+  const scriptPath = realpathSync(process.argv[1]);
   return resolve(dirname(scriptPath), "..");
 }
 
 /**
- * Pull latest claudopilot source, rebuild, and re-exec the update command
- * with --skip-self-update so it doesn't loop.
+ * Detect whether we're running from a git clone (npm link) or an npm install.
  */
-async function selfUpdate(repoRoot: string, args: string[]): Promise<boolean> {
+function isGitInstall(): boolean {
+  const repoRoot = getRepoRoot();
+  return existsSync(resolve(repoRoot, ".git"));
+}
+
+/**
+ * Self-update via git pull + rebuild (for npm link / dev installs).
+ */
+async function selfUpdateFromGit(repoRoot: string, args: string[]): Promise<boolean> {
   const spinner = ui.spinner("Pulling latest claudopilot...");
   try {
     const pullOutput = execSync("git pull --rebase", {
@@ -42,7 +56,7 @@ async function selfUpdate(repoRoot: string, args: string[]): Promise<boolean> {
 
     if (pullOutput === "Current branch main is up to date.") {
       spinner.succeed("  claudopilot already up to date");
-      return false; // No changes, no need to re-exec
+      return false;
     }
 
     spinner.succeed(`  claudopilot updated`);
@@ -80,7 +94,58 @@ async function selfUpdate(repoRoot: string, args: string[]): Promise<boolean> {
   } catch {
     // Exit code propagated via stdio inherit
   }
-  return true; // We re-exec'd, caller should exit
+  return true;
+}
+
+/**
+ * Self-update via npm (for global npm installs).
+ */
+async function selfUpdateFromNpm(): Promise<boolean> {
+  const spinner = ui.spinner("Checking for updates...");
+  try {
+    const latest = execSync(`npm view ${PKG_NAME} version`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    if (latest === currentVersion) {
+      spinner.succeed(`  claudopilot v${currentVersion} is already the latest`);
+      return false;
+    }
+
+    spinner.succeed(`  New version available: v${currentVersion} → v${latest}`);
+  } catch (error: any) {
+    const stderr = error?.stderr?.toString?.() || error?.message || String(error);
+    spinner.fail(`  Failed to check for updates: ${stderr.trim()}`);
+    ui.warn("Continuing with current version...");
+    return false;
+  }
+
+  const installSpinner = ui.spinner(`Updating ${PKG_NAME}...`);
+  try {
+    execSync(`npm install -g ${PKG_NAME}@latest`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    installSpinner.succeed("  claudopilot updated");
+  } catch (error: any) {
+    const stderr = error?.stderr?.toString?.() || error?.message || String(error);
+    installSpinner.fail(`  Update failed: ${stderr.trim()}`);
+    ui.warn("Continuing with current version...");
+    return false;
+  }
+
+  // Re-exec with the freshly installed CLI
+  ui.info("Re-running update with latest version...\n");
+  try {
+    execSync(`claudopilot update --skip-self-update`, {
+      cwd: process.cwd(),
+      stdio: "inherit",
+    });
+  } catch {
+    // Exit code propagated via stdio inherit
+  }
+  return true;
 }
 
 export async function update(options: UpdateOptions): Promise<void> {
@@ -88,11 +153,17 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   // Self-update unless --skip-self-update was passed (to avoid infinite loop)
   if (!options.skipSelfUpdate) {
-    const repoRoot = getRepoRoot();
-    const passthrough: string[] = [];
-    if (options.includeWorker) passthrough.push("--include-worker");
+    let reExeced: boolean;
 
-    const reExeced = await selfUpdate(repoRoot, passthrough);
+    if (isGitInstall()) {
+      const repoRoot = getRepoRoot();
+      const passthrough: string[] = [];
+      if (options.includeWorker) passthrough.push("--include-worker");
+      reExeced = await selfUpdateFromGit(repoRoot, passthrough);
+    } else {
+      reExeced = await selfUpdateFromNpm();
+    }
+
     if (reExeced) return; // Fresh version already ran
   }
 

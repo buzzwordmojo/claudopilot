@@ -3,7 +3,7 @@
     "PostToolUse": [
       {
         "matcher": "Bash",
-        "hooks": ["scripts/bump-version.sh"]
+        "hooks": [{"type": "command", "command": "scripts/bump-version.sh"}]
       }
     ]
   }
