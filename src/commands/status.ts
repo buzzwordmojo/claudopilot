@@ -62,7 +62,7 @@ export async function status(): Promise<void> {
   }
 
   const statusMap = config.pm.statuses;
-  console.log(`  ${chalk.bold("Statuses:")}      idea=${statusMap.idea}, planning=${statusMap.planning}, redTeam=${statusMap.redTeam}`);
+  console.log(`  ${chalk.bold("Statuses:")}      idea=${statusMap.idea}, planning=${statusMap.planning}`);
   console.log(`                 blocked=${statusMap.blocked}, awaiting=${statusMap.awaitingApproval}, approved=${statusMap.approved}`);
   console.log(`                 building=${statusMap.building}, inReview=${statusMap.inReview}, done=${statusMap.done}`);
 

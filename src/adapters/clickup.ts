@@ -228,7 +228,6 @@ export class ClickUpAdapter implements PMAdapter {
 const STATUS_COLORS = [
   "#6B7280", // idea - gray
   "#3B82F6", // planning - blue
-  "#EF4444", // red team - red
   "#F59E0B", // blocked - amber
   "#8B5CF6", // awaiting approval - purple
   "#10B981", // approved - green

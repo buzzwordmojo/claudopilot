@@ -72,7 +72,7 @@ npx @buzzwordmojo/claudopilot init
 The interactive wizard walks you through:
 
 1. **Project detection** — auto-detects Next.js, NestJS, FastAPI, Rails
-2. **ClickUp connection** — validates credentials, picks workspace/space/list, configures 9 lifecycle statuses
+2. **ClickUp connection** — validates credentials, picks workspace/space/list, configures 8 lifecycle statuses
 3. **GitHub setup** — lists repos from your org, selects target, configures git identity for CI commits
 4. **Red team config** — AI-analyzes your codebase to suggest domain-specific review lenses, configures blocking severity
 5. **Cross-board automations** — event-driven rules engine for syncing statuses and triggering actions across boards
@@ -255,8 +255,7 @@ Projects spanning multiple repositories (e.g., a Next.js frontend + FastAPI back
 | Status | What happens |
 |--------|-------------|
 | **idea** | Task created, waiting to be picked up |
-| **planning** | Webhook fires. Claude runs architect/red team loop, posts comments to ClickUp, writes spec. Humans unassigned. |
-| **red team** | Red team evaluation in progress |
+| **planning** | Webhook fires. Claude runs architect/red team loop (both phases within one session), posts comments to ClickUp, writes spec. Humans unassigned. |
 | **blocked** | Claude has questions — task assigned to human + notified, waiting for answers |
 | **awaiting approval** | Spec complete — reviewer assigned + notified. (Skipped if auto-approve tag present.) |
 | **approved** | Webhook fires. Claude implements per subtask, creates branch + PR. Humans unassigned. |
@@ -351,7 +350,6 @@ pm:
   statuses:
     idea: idea
     planning: planning
-    redTeam: red team
     blocked: blocked
     awaitingApproval: awaiting approval
     approved: approved

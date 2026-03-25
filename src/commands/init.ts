@@ -175,7 +175,7 @@ export async function init(options: InitOptions): Promise<void> {
   const existingStatuses = existing?.pm?.statuses;
   const useDefaults = await confirm({
     message:
-      "Use default statuses (idea → planning → red team → blocked → awaiting approval → approved → building → in review → done)?",
+      "Use default statuses (idea → planning → blocked → awaiting approval → approved → building → in review → done)?",
     default: true,
   });
 

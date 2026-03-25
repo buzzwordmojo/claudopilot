@@ -73,7 +73,6 @@ export interface PMConfig {
 export interface StatusConfig {
   idea: string;
   planning: string;
-  redTeam: string;
   blocked: string;
   awaitingApproval: string;
   approved: string;
@@ -85,7 +84,6 @@ export interface StatusConfig {
 export const DEFAULT_STATUSES: StatusConfig = {
   idea: "idea",
   planning: "planning",
-  redTeam: "red team",
   blocked: "blocked",
   awaitingApproval: "awaiting approval",
   approved: "approved",
