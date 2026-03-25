@@ -455,6 +455,25 @@ export default {
             const mentionText = (action.mention.text || '')
               .replace(/\\{\\{status\\}\\}/g, newStatus || '')
               .replace(/\\{\\{taskName\\}\\}/g, taskData.name || '');
+            // Build structured comment array with proper ClickUp @mention tags
+            const userId = Number(action.mention.userId);
+            const commentParts = [];
+            const mentionRegex = /@[\\w\\s]+/g;
+            let lastIndex = 0;
+            let match;
+            while ((match = mentionRegex.exec(mentionText)) !== null) {
+              if (match.index > lastIndex) {
+                commentParts.push({ text: mentionText.slice(lastIndex, match.index) });
+              }
+              commentParts.push({ type: 'tag', user: { id: userId } });
+              lastIndex = match.index + match[0].length;
+            }
+            if (lastIndex < mentionText.length) {
+              commentParts.push({ text: mentionText.slice(lastIndex) });
+            }
+            if (commentParts.length === 0) {
+              commentParts.push({ text: mentionText });
+            }
             try {
               await fetch(
                 'https://api.clickup.com/api/v2/task/' + taskId + '/comment',
@@ -465,9 +484,9 @@ export default {
                     'Content-Type': 'application/json',
                   },
                   body: JSON.stringify({
-                    comment_text: mentionText,
+                    comment: commentParts,
                     notify_all: false,
-                    assignee: Number(action.mention.userId),
+                    assignee: userId,
                   }),
                 }
               );
@@ -552,7 +571,17 @@ export async function deployCloudflareWorker(
   automationsConfig?: AutomationsConfig,
   sdlcListIds?: string[]
 ): Promise<string> {
-  const webhookSecret = generateSecret();
+  // Reuse existing webhook secret from config URL on redeploy to avoid breaking registered webhooks
+  let webhookSecret: string | undefined;
+  if (cfConfig.workerUrl) {
+    try {
+      const existingUrl = new URL(cfConfig.workerUrl);
+      webhookSecret = existingUrl.searchParams.get("secret") || undefined;
+    } catch {
+      // Malformed URL, generate new secret
+    }
+  }
+  if (!webhookSecret) webhookSecret = generateSecret();
   const githubRepo = `${githubConfig.owner}/${githubConfig.repos[0]}`;
 
   const spinner = ui.spinner("Deploying Cloudflare Worker...");

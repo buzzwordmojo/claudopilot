@@ -47,6 +47,20 @@ function isGitInstall(): boolean {
  */
 async function selfUpdateFromGit(repoRoot: string, args: string[]): Promise<boolean> {
   const spinner = ui.spinner("Pulling latest claudopilot...");
+
+  // Stash any local changes so git pull --rebase can proceed
+  let didStash = false;
+  try {
+    const stashOutput = execSync("git stash --include-untracked", {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    didStash = !stashOutput.includes("No local changes to save");
+  } catch {
+    // If stash fails, continue anyway — pull may still work
+  }
+
   try {
     const pullOutput = execSync("git pull --rebase", {
       cwd: repoRoot,
@@ -56,15 +70,26 @@ async function selfUpdateFromGit(repoRoot: string, args: string[]): Promise<bool
 
     if (pullOutput === "Current branch main is up to date.") {
       spinner.succeed("  claudopilot already up to date");
-      return false;
+    } else {
+      spinner.succeed(`  claudopilot updated`);
     }
-
-    spinner.succeed(`  claudopilot updated`);
   } catch (error: any) {
     const stderr = error?.stderr?.toString?.() || error?.message || String(error);
     spinner.fail(`  Failed to pull latest: ${stderr.trim()}`);
     ui.warn("Continuing with current version...");
+    if (didStash) {
+      try { execSync("git stash pop", { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
+    }
     return false;
+  }
+
+  // Restore stashed changes
+  if (didStash) {
+    try {
+      execSync("git stash pop", { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] });
+    } catch {
+      ui.warn("Could not restore stashed changes — run `git stash pop` manually in claudopilot repo");
+    }
   }
 
   const buildSpinner = ui.spinner("Rebuilding claudopilot...");
