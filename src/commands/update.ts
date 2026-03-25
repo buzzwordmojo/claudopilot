@@ -222,7 +222,7 @@ export async function update(options: UpdateOptions): Promise<void> {
           config.github,
           secrets.GITHUB_PAT,
           secrets.CLICKUP_API_KEY,
-          config.sync,
+          config.automations,
           config.pm.sdlcListIds ?? (config.pm.listId ? [config.pm.listId] : [])
         );
         ui.success("Cloudflare Worker redeployed");

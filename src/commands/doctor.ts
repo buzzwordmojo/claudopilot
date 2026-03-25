@@ -180,16 +180,16 @@ export async function doctor(): Promise<void> {
     warned++;
   }
 
-  // Check sync
-  if (config.sync?.enabled) {
-    const boardCount = Object.keys(config.sync.boards).length;
-    const ruleCount = config.sync.rules.length;
-    ui.success(`Cross-board sync: ${boardCount} board(s), ${ruleCount} rule(s)`);
+  // Check automations
+  if (config.automations?.enabled) {
+    const boardCount = Object.keys(config.automations.boards).length;
+    const ruleCount = config.automations.rules.length;
+    ui.success(`Cross-board automations: ${boardCount} board(s), ${ruleCount} rule(s)`);
     passed++;
 
     // Verify board list IDs exist
     if (clickupKey) {
-      for (const [name, listId] of Object.entries(config.sync.boards)) {
+      for (const [name, listId] of Object.entries(config.automations.boards)) {
         const boardSpinner = ui.spinner(`Verifying board "${name}" (list ${listId})...`);
         try {
           const adapter = new ClickUpAdapter(clickupKey);
@@ -203,13 +203,13 @@ export async function doctor(): Promise<void> {
       }
     }
 
-    // Check sync workflow exists
-    if (config.sync.rules.some((r) => r.then.some((a) => "dispatch" in a))) {
-      if (existsSync(join(workflowsDir, "claudopilot-sync.yml"))) {
-        ui.success("GitHub Action: claudopilot-sync.yml");
+    // Check automations workflow exists
+    if (config.automations.rules.some((r) => r.then.some((a) => "dispatch" in a))) {
+      if (existsSync(join(workflowsDir, "claudopilot-automations.yml"))) {
+        ui.success("GitHub Action: claudopilot-automations.yml");
         passed++;
       } else {
-        ui.error("Missing workflow: claudopilot-sync.yml (sync dispatch rules configured)");
+        ui.error("Missing workflow: claudopilot-automations.yml (automations dispatch rules configured)");
         failed++;
       }
     }

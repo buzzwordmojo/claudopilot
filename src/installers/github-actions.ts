@@ -46,10 +46,10 @@ export async function installGitHubActions(
     );
   }
 
-  if (config.sync?.enabled) {
+  if (config.automations?.enabled) {
     await writeFile(
-      join(workflowsDir, "claudopilot-sync.yml"),
-      generateSyncWorkflow(config)
+      join(workflowsDir, "claudopilot-automations.yml"),
+      generateAutomationsWorkflow(config)
     );
   }
 
@@ -1344,17 +1344,17 @@ ${generateAuthRefreshStep()}
 `;
 }
 
-function generateSyncWorkflow(config: ClaudopilotConfig): string {
+function generateAutomationsWorkflow(config: ClaudopilotConfig): string {
   const companions = getCompanionRepos(config);
   const hasCompanions = companions.length > 0;
   const companionCheckouts = hasCompanions
     ? generateCompanionCheckoutSteps(companions, 1)
     : "";
 
-  return `name: Claudopilot Sync
+  return `name: Claudopilot Automations
 on:
   repository_dispatch:
-    types: [clickup-sync]
+    types: [clickup-automations]
 
 permissions:
   contents: read
@@ -1364,7 +1364,7 @@ env:
   TASK_ID: \${{ github.event.client_payload.task_id }}
 
 jobs:
-  sync:
+  automations:
     name: "\${{ github.event.client_payload.rule_name }}"
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1386,17 +1386,17 @@ ${generateAuthRefreshStep()}
         run: |
           sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
 
-      - name: Run sync dispatch
+      - name: Run automations dispatch
         id: claude
         continue-on-error: true
         env:
-          SYNC_PROMPT: \${{ github.event.client_payload.prompt }}
+          AUTOMATIONS_PROMPT: \${{ github.event.client_payload.prompt }}
           RULE_NAME: \${{ github.event.client_payload.rule_name }}
           TASK_NAME: \${{ github.event.client_payload.task_name }}
         run: |
           set -o pipefail
           CONTEXT="Task ID: \$TASK_ID\\nTask Name: \$TASK_NAME\\nRule: \$RULE_NAME\\n\\n"
-          FULL_PROMPT="\$CONTEXT\$SYNC_PROMPT"
+          FULL_PROMPT="\$CONTEXT\$AUTOMATIONS_PROMPT"
           claude -p "\$FULL_PROMPT" \\
             --max-turns 15 \\
             --verbose \\
@@ -1407,9 +1407,9 @@ ${generateAuthRefreshStep()}
         if: always()
         run: |
           if [ "\${{ steps.claude.outcome }}" = "success" ]; then
-            echo "Sync dispatch complete (\$RULE_NAME)"
+            echo "Automations dispatch complete (\$RULE_NAME)"
           else
-            echo "Sync dispatch failed — check logs"
+            echo "Automations dispatch failed — check logs"
             exit 1
           fi
 `;

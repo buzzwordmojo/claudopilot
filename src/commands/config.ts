@@ -14,7 +14,7 @@ import {
   setupImprove,
   setupCompetitors,
   setupDream,
-  setupSync,
+  setupAutomations,
   setupAssignees,
   setupAutoApprove,
   customizeStatuses,
@@ -260,15 +260,15 @@ export async function configAutoApprove(): Promise<void> {
   await saveAndUpdate(config);
 }
 
-// ─── config sync ───
+// ─── config automations ───
 
-export async function configSync(): Promise<void> {
+export async function configAutomations(): Promise<void> {
   ui.banner();
   const config = await loadConfig();
   requireConfig(config);
   const secrets = await loadSecrets();
 
-  ui.header("Cross-Board Sync");
+  ui.header("Cross-Board Automations");
 
   const clickupKey = secrets.CLICKUP_API_KEY;
   const spaceId = config.pm.spaceId;
@@ -279,7 +279,7 @@ export async function configSync(): Promise<void> {
     process.exit(1);
   }
 
-  config.sync = await setupSync(clickupKey, spaceId, workspaceId, config.sync);
+  config.automations = await setupAutomations(clickupKey, spaceId, workspaceId, config.automations);
   await saveAndUpdate(config);
 }
 

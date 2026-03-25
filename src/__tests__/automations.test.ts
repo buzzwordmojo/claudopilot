@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { SyncConfig, SyncRule, ClaudopilotConfig } from "../types.js";
+import type { AutomationsConfig, AutomationRule, ClaudopilotConfig } from "../types.js";
 
 // ─── Worker script generation tests ───
 
-describe("Cloudflare Worker sync rules", () => {
-  it("embeds sync boards and rules into the worker script", async () => {
+describe("Cloudflare Worker automations rules", () => {
+  it("embeds automation boards and rules into the worker script", async () => {
     // We can't import the WORKER_SCRIPT directly (it's a local const),
     // but we can test via deployCloudflareWorker's script generation.
     // Instead, test the shape of the config that flows into the worker.
-    const syncConfig: SyncConfig = {
+    const automationsConfig: AutomationsConfig = {
       enabled: true,
       boards: {
         engineering: "901234567",
@@ -16,7 +16,7 @@ describe("Cloudflare Worker sync rules", () => {
       },
       rules: [
         {
-          name: "Sync eng to support",
+          name: "Notify support when eng builds",
           when: { board: "engineering", status: "building" },
           then: [
             { update_linked: { board: "support", status: "in progress" } },
@@ -31,10 +31,10 @@ describe("Cloudflare Worker sync rules", () => {
       ],
     };
 
-    expect(syncConfig.boards.engineering).toBe("901234567");
-    expect(syncConfig.rules).toHaveLength(1);
-    expect(syncConfig.rules[0].when.board).toBe("engineering");
-    expect(syncConfig.rules[0].then).toHaveLength(2);
+    expect(automationsConfig.boards.engineering).toBe("901234567");
+    expect(automationsConfig.rules).toHaveLength(1);
+    expect(automationsConfig.rules[0].when.board).toBe("engineering");
+    expect(automationsConfig.rules[0].then).toHaveLength(2);
   });
 });
 
@@ -91,7 +91,7 @@ describe("Rule matching", () => {
 
   const rules: SimRule[] = [
     {
-      name: "Sync eng building to support",
+      name: "Notify support when eng builds",
       when: { board: "engineering", status: "building" },
       then: [{ update_linked: { board: "support", status: "in progress" } }],
     },
@@ -110,7 +110,7 @@ describe("Rule matching", () => {
   it("matches rules by source board and status", () => {
     const matched = matchRules(rules, boards, "list-eng-1", "status_changed", "building");
     expect(matched).toHaveLength(1);
-    expect(matched[0].name).toBe("Sync eng building to support");
+    expect(matched[0].name).toBe("Notify support when eng builds");
   });
 
   it("matches different status on same board", () => {
@@ -186,7 +186,7 @@ describe("Task created event matching", () => {
       then: [{ dispatch: { prompt: "Create eng task from support ticket" } }],
     },
     {
-      name: "Sync eng building to support",
+      name: "Notify support when eng builds",
       when: { board: "engineering", event: "status_changed", status: "building" },
       then: [{ update_linked: { board: "support", status: "in progress" } }],
     },
@@ -211,7 +211,7 @@ describe("Task created event matching", () => {
   it("status_changed rules still work alongside created rules", () => {
     const matched = matchRules(rules, boards, "list-eng", "status_changed", "building");
     expect(matched).toHaveLength(1);
-    expect(matched[0].name).toBe("Sync eng building to support");
+    expect(matched[0].name).toBe("Notify support when eng builds");
   });
 
   it("created event on wrong board returns empty", () => {
@@ -368,11 +368,11 @@ describe("Action type detection", () => {
   });
 });
 
-// ─── SyncConfig validation ───
+// ─── AutomationsConfig validation ───
 
-describe("SyncConfig shape", () => {
-  it("requires at least 2 boards for meaningful sync", () => {
-    const config: SyncConfig = {
+describe("AutomationsConfig shape", () => {
+  it("requires at least 2 boards for meaningful automations", () => {
+    const config: AutomationsConfig = {
       enabled: true,
       boards: { engineering: "1", support: "2" },
       rules: [],
@@ -381,7 +381,7 @@ describe("SyncConfig shape", () => {
   });
 
   it("rules reference board names that exist in boards map", () => {
-    const config: SyncConfig = {
+    const config: AutomationsConfig = {
       enabled: true,
       boards: { engineering: "1", support: "2" },
       rules: [

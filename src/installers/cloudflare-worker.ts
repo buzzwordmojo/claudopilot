@@ -1,5 +1,5 @@
 import { ui } from "../utils/ui.js";
-import type { CloudflareConfig, GitHubConfig, SyncConfig } from "../types.js";
+import type { CloudflareConfig, GitHubConfig, AutomationsConfig } from "../types.js";
 
 const WORKER_SCRIPT = (
   githubRepo: string,
@@ -7,8 +7,8 @@ const WORKER_SCRIPT = (
   webhookSecret: string,
   clickupApiKey: string,
   sdlcListIds: string[],
-  syncBoards: Record<string, string>,
-  syncRules: Array<{ name: string; when: { board: string; event?: string; status?: string; tag?: string }; then: Array<Record<string, unknown>> }>,
+  automationBoards: Record<string, string>,
+  automationRules: Array<{ name: string; when: { board: string; event?: string; status?: string; tag?: string }; then: Array<Record<string, unknown>> }>,
   dispatchGateTag?: string
 ) => `
 export default {
@@ -168,11 +168,11 @@ export default {
       return new Response('Unhandled event', { status: 200 });
     }
 
-    const results = { sync: [], dispatch: false };
+    const results = { automations: [], dispatch: false };
 
-    // ─── Sync rules engine ───
-    const BOARDS = ${JSON.stringify(syncBoards)};
-    const RULES = ${JSON.stringify(syncRules)};
+    // ─── Automations rules engine ───
+    const BOARDS = ${JSON.stringify(automationBoards)};
+    const RULES = ${JSON.stringify(automationRules)};
 
     // Reverse lookup: listId → board name
     const listIdToBoard = {};
@@ -239,7 +239,7 @@ export default {
                     body: JSON.stringify({ status: action.update_linked.status }),
                   }
                 );
-                results.sync.push({ action: 'update_linked', task: link.task_id, status: action.update_linked.status });
+                results.automations.push({ action: 'update_linked', task: link.task_id, status: action.update_linked.status });
               } catch (e) {
                 // Continue processing other links
               }
@@ -272,7 +272,7 @@ export default {
                     body: JSON.stringify({ comment_text: text }),
                   }
                 );
-                results.sync.push({ action: 'comment_linked', task: link.task_id });
+                results.automations.push({ action: 'comment_linked', task: link.task_id });
               } catch (e) {
                 // Continue processing
               }
@@ -312,7 +312,7 @@ export default {
                       },
                     }
                   );
-                  results.sync.push({ action: 'create_and_link', created: created.id, board: action.create_and_link.board });
+                  results.automations.push({ action: 'create_and_link', created: created.id, board: action.create_and_link.board });
                 }
               } catch (e) {
                 // Continue processing
@@ -343,7 +343,7 @@ export default {
                       }
                     );
                   }
-                  results.sync.push({ action: 'assign_linked', task: link.task_id, userId: action.assign_linked.userId });
+                  results.automations.push({ action: 'assign_linked', task: link.task_id, userId: action.assign_linked.userId });
                 } catch (e) {}
               }
             }
@@ -374,7 +374,7 @@ export default {
                       }
                     );
                   }
-                  results.sync.push({ action: 'unassign_linked', task: link.task_id });
+                  results.automations.push({ action: 'unassign_linked', task: link.task_id });
                 } catch (e) {}
               }
             }
@@ -399,7 +399,7 @@ export default {
                       headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
                     }
                   );
-                  results.sync.push({ action: 'tag_linked', task: link.task_id, tag: action.tag_linked.tag });
+                  results.automations.push({ action: 'tag_linked', task: link.task_id, tag: action.tag_linked.tag });
                 } catch (e) {}
               }
             }
@@ -417,7 +417,7 @@ export default {
                   },
                 }
               );
-              results.sync.push({ action: 'create_link', taskId: action.create_link.taskId });
+              results.automations.push({ action: 'create_link', taskId: action.create_link.taskId });
             } catch (e) {
               // Continue processing
             }
@@ -435,7 +435,7 @@ export default {
                     'User-Agent': 'claudopilot-webhook',
                   },
                   body: JSON.stringify({
-                    event_type: 'clickup-sync',
+                    event_type: 'clickup-automations',
                     client_payload: {
                       task_id: taskId,
                       task_name: taskData.name || '',
@@ -445,7 +445,7 @@ export default {
                   }),
                 }
               );
-              results.sync.push({ action: 'dispatch', rule: rule.name });
+              results.automations.push({ action: 'dispatch', rule: rule.name });
             } catch (e) {
               // Continue processing
             }
@@ -471,7 +471,7 @@ export default {
                   }),
                 }
               );
-              results.sync.push({ action: 'mention', task: taskId, userId: action.mention.userId });
+              results.automations.push({ action: 'mention', task: taskId, userId: action.mention.userId });
             } catch (e) {
               // Continue processing
             }
@@ -483,7 +483,7 @@ export default {
     // ─── Existing planning/approved dispatch (status_changed only) ───
     if (eventType !== 'status_changed' || !newStatus) {
       return new Response(
-        JSON.stringify({ task_id: taskId, event: eventType, sync: results.sync }),
+        JSON.stringify({ task_id: taskId, event: eventType, automations: results.automations }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -498,7 +498,7 @@ export default {
 
     if (!triggers.includes(newStatus) || (taskData && !SDLC_LIST_IDS.includes(taskData.list?.id)) || !gateOk) {
       return new Response(
-        JSON.stringify({ task_id: taskId, status: newStatus, sync: results.sync, gated: !gateOk }),
+        JSON.stringify({ task_id: taskId, status: newStatus, automations: results.automations, gated: !gateOk }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -534,7 +534,7 @@ export default {
     }
 
     return new Response(
-      JSON.stringify({ dispatched: true, task_id: taskId, status: newStatus, sync: results.sync }),
+      JSON.stringify({ dispatched: true, task_id: taskId, status: newStatus, automations: results.automations }),
       {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -549,7 +549,7 @@ export async function deployCloudflareWorker(
   githubConfig: GitHubConfig,
   githubPat: string,
   clickupApiKey?: string,
-  syncConfig?: SyncConfig,
+  automationsConfig?: AutomationsConfig,
   sdlcListIds?: string[]
 ): Promise<string> {
   const webhookSecret = generateSecret();
@@ -560,10 +560,10 @@ export async function deployCloudflareWorker(
   try {
     const workerName = cfConfig.workerName || "claudopilot-webhook";
 
-    // Extract sync boards and rules for the worker
-    const syncBoards = syncConfig?.enabled ? syncConfig.boards : {};
-    const syncRules = syncConfig?.enabled
-      ? syncConfig.rules.map((r) => ({
+    // Extract automation boards and rules for the worker
+    const automationBoards = automationsConfig?.enabled ? automationsConfig.boards : {};
+    const automationRules = automationsConfig?.enabled
+      ? automationsConfig.rules.map((r) => ({
           name: r.name,
           when: r.when,
           then: r.then,
@@ -577,9 +577,9 @@ export async function deployCloudflareWorker(
       webhookSecret,
       clickupApiKey || "",
       sdlcListIds ?? [],
-      syncBoards,
-      syncRules,
-      syncConfig?.dispatchGateTag
+      automationBoards,
+      automationRules,
+      automationsConfig?.dispatchGateTag
     );
 
     const formData = new FormData();

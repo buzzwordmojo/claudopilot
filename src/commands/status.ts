@@ -158,13 +158,13 @@ export async function status(): Promise<void> {
     ui.info("Dream: disabled");
   }
 
-  // Sync
-  if (config.sync?.enabled) {
-    const boardCount = Object.keys(config.sync.boards).length;
-    const ruleCount = config.sync.rules.length;
-    ui.success(`Sync: ${boardCount} board(s), ${ruleCount} rule(s)${config.sync.dispatchGateTag ? `, gate tag "${config.sync.dispatchGateTag}"` : ""}`);
+  // Automations
+  if (config.automations?.enabled) {
+    const boardCount = Object.keys(config.automations.boards).length;
+    const ruleCount = config.automations.rules.length;
+    ui.success(`Automations: ${boardCount} board(s), ${ruleCount} rule(s)${config.automations.dispatchGateTag ? `, gate tag "${config.automations.dispatchGateTag}"` : ""}`);
   } else {
-    ui.info("Sync: disabled");
+    ui.info("Automations: disabled");
   }
 
   // ── Installed Files ────────────────────────────────
@@ -189,8 +189,8 @@ export async function status(): Promise<void> {
     files.push(["claudopilot-improve.yml", join(cwd, ".github", "workflows", "claudopilot-improve.yml")]);
   }
 
-  if (config.sync?.enabled) {
-    files.push(["claudopilot-sync.yml", join(cwd, ".github", "workflows", "claudopilot-sync.yml")]);
+  if (config.automations?.enabled) {
+    files.push(["claudopilot-automations.yml", join(cwd, ".github", "workflows", "claudopilot-automations.yml")]);
   }
 
   for (const [label, path] of files) {

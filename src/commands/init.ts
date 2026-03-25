@@ -33,9 +33,9 @@ import type {
   RepoConfig,
   StatusConfig,
   Severity,
-  SyncConfig,
-  SyncRule,
-  SyncAction,
+  AutomationsConfig,
+  AutomationRule,
+  AutomationAction,
 } from "../types.js";
 import { DEFAULT_STATUSES, DEFAULT_IMPROVE_LENSES } from "../types.js";
 import { suggestDomainLenses } from "../utils/analyze.js";
@@ -208,11 +208,11 @@ export async function init(options: InitOptions): Promise<void> {
 
   const redTeamConfig = await setupRedTeam(anthropicKey, pmConfig.apiKey!, pmConfig.workspaceId!, existing?.redTeam);
 
-  // ─── Cross-Board Sync (before Worker so rules can be embedded) ───
+  // ─── Cross-Board Automations (before Worker so rules can be embedded) ───
   step++;
-  ui.step(step, totalSteps, "Cross-board sync...");
+  ui.step(step, totalSteps, "Cross-board automations...");
 
-  const syncConfig = await setupSync(pmConfig.apiKey!, pmConfig.spaceId!, pmConfig.workspaceId!, existing?.sync);
+  const automationsConfig = await setupAutomations(pmConfig.apiKey!, pmConfig.spaceId!, pmConfig.workspaceId!, existing?.automations);
 
   // ─── PR Feedback Cycle ───
   step++;
@@ -251,14 +251,14 @@ export async function init(options: InitOptions): Promise<void> {
           githubConfig,
           githubConfig.pat,
           pmConfig.apiKey!,
-          syncConfig,
+          automationsConfig,
           pmConfig.sdlcListIds ?? (pmConfig.listId ? [pmConfig.listId] : [])
         );
 
         // Create ClickUp webhook pointing to the worker
         const webhookEvents = ["taskStatusUpdated"];
-        if (syncConfig?.enabled) {
-          const events = syncConfig.rules.map((r) => r.when.event ?? "status_changed");
+        if (automationsConfig?.enabled) {
+          const events = automationsConfig.rules.map((r) => r.when.event ?? "status_changed");
           if (events.includes("created")) webhookEvents.push("taskCreated");
           if (events.includes("tag_added") || events.includes("tag_removed")) webhookEvents.push("taskTagUpdated");
         }
@@ -511,7 +511,7 @@ export async function init(options: InitOptions): Promise<void> {
     deployment: deploymentConfig,
     assignees: assigneesConfig,
     autoApprove: autoApproveConfig,
-    sync: syncConfig,
+    automations: automationsConfig,
   };
 
   await saveConfig(config);
@@ -1523,12 +1523,12 @@ export async function setupFeedback(existing?: FeedbackConfig): Promise<Feedback
   return { enabled: true };
 }
 
-// ─── Sync Setup ───
+// ─── Automations Setup ───
 
-export async function setupSync(clickupApiKey: string, spaceId: string, workspaceId: string, existing?: SyncConfig): Promise<SyncConfig | undefined> {
+export async function setupAutomations(clickupApiKey: string, spaceId: string, workspaceId: string, existing?: AutomationsConfig): Promise<AutomationsConfig | undefined> {
   const config_workspaceId = workspaceId;
   const enable = await confirm({
-    message: "Enable cross-board sync? (Sync statuses and comments between ClickUp boards via task relationships)",
+    message: "Enable cross-board automations? (Automate statuses, comments, and mentions between ClickUp boards via task relationships)",
     default: existing?.enabled ?? false,
   });
 
@@ -1588,12 +1588,12 @@ export async function setupSync(clickupApiKey: string, spaceId: string, workspac
   }
 
   if (Object.keys(boards).length < 2) {
-    ui.warn("Cross-board sync requires at least 2 boards.");
+    ui.warn("Cross-board automations requires at least 2 boards.");
     return undefined;
   }
 
   // Set up rules
-  const rules: SyncRule[] = [...(existing?.rules ?? [])];
+  const rules: AutomationRule[] = [...(existing?.rules ?? [])];
   const boardNames = Object.keys(boards);
 
   if (rules.length > 0) {
@@ -1611,13 +1611,13 @@ export async function setupSync(clickupApiKey: string, spaceId: string, workspac
   }
 
   let addRules = await confirm({
-    message: rules.length > 0 ? "Add more rules?" : "Add sync rules?",
+    message: rules.length > 0 ? "Add more rules?" : "Add automation rules?",
     default: rules.length === 0,
   });
 
   while (addRules) {
     const ruleName = await input({
-      message: "Rule name (e.g., 'Sync engineering status to support'):",
+      message: "Rule name (e.g., 'Notify support when engineering ships'):",
     });
 
     const triggerBoard = await select({
@@ -1664,7 +1664,7 @@ export async function setupSync(clickupApiKey: string, spaceId: string, workspac
     }
 
     // Actions
-    const actions: SyncAction[] = [];
+    const actions: AutomationAction[] = [];
     let addActions = true;
     while (addActions) {
       const actionType = await select({
@@ -1808,7 +1808,7 @@ export async function setupSync(clickupApiKey: string, spaceId: string, workspac
   }
 
   if (rules.length === 0) {
-    ui.warn("No rules configured — sync will be enabled but won't do anything.");
+    ui.warn("No rules configured — automations will be enabled but won't do anything.");
   }
 
   // Dispatch gate tag

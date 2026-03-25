@@ -33,7 +33,7 @@ export interface ClaudopilotConfig {
   deployment?: DeploymentConfig;
   assignees?: AssigneeConfig;
   autoApprove?: AutoApproveConfig;
-  sync?: SyncConfig;
+  automations?: AutomationsConfig;
   feedback?: FeedbackConfig;
 }
 
@@ -150,20 +150,20 @@ export interface FeedbackConfig {
   enabled: boolean;
 }
 
-export interface SyncConfig {
+export interface AutomationsConfig {
   enabled: boolean;
   boards: Record<string, string>;  // name → listId
-  rules: SyncRule[];
+  rules: AutomationRule[];
   dispatchGateTag?: string;  // if set, planning/approved dispatch only fires when task has this tag
 }
 
-export interface SyncRule {
+export interface AutomationRule {
   name: string;
-  when: SyncTrigger;
-  then: SyncAction[];
+  when: AutomationTrigger;
+  then: AutomationAction[];
 }
 
-export interface SyncTrigger {
+export interface AutomationTrigger {
   board: string;    // references boards key
   source?: "clickup" | "github";  // defaults to "clickup"
   event?: "status_changed" | "created" | "tag_added" | "tag_removed"
@@ -172,7 +172,7 @@ export interface SyncTrigger {
   tag?: string;     // tag name to trigger on (required for tag_added/tag_removed)
 }
 
-export type SyncAction =
+export type AutomationAction =
   | { update_linked: { board: string; status: string } }
   | { comment_linked: { board: string; text: string } }
   | { create_link: { taskId: string } }
