@@ -1,6 +1,6 @@
 {
   "name": "@buzzwordmojo/claudopilot",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "AI-augmented SDLC with self-driving planning, red team loops, and PM integration",
   "type": "module",
   "bin": {
