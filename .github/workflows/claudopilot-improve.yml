@@ -1,0 +1,826 @@
+name: Claudopilot Improve
+on:
+  workflow_dispatch:
+    inputs:
+      lenses:
+        description: "Comma-separated lenses (leave empty for all)"
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
+
+jobs:
+  improve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      needs_continuation: ${{ steps.detect.outputs.needs_continuation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Refresh Claude credentials if needed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          CREDS_FILE="$HOME/.claude/.credentials.json"
+          if [ ! -f "$CREDS_FILE" ]; then
+            echo "No credentials file found"
+            exit 0
+          fi
+
+          # Check expiration
+          EXPIRES_AT=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('expiresAt', 0))
+          else:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+          NOW_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+          BUFFER_MS=300000  # 5 minutes
+
+          if [ "$EXPIRES_AT" -gt "$((NOW_MS + BUFFER_MS))" ] 2>/dev/null; then
+            echo "Token valid — expires in $(( (EXPIRES_AT - NOW_MS) / 60000 )) minutes"
+            exit 0
+          fi
+
+          echo "Token expired or expiring soon — attempting refresh..."
+
+          # Extract refresh token
+          REFRESH_TOKEN=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('refreshToken', ''))
+          " 2>/dev/null || echo "")
+
+          if [ -z "$REFRESH_TOKEN" ]; then
+            echo "::warning::No refresh token found — cannot auto-refresh"
+            exit 0
+          fi
+
+          # Refresh the token
+          RESPONSE=$(curl -s -X POST "https://api.anthropic.com/v1/oauth/token" \
+            -H "Content-Type: application/json" \
+            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$REFRESH_TOKEN\"}")
+
+          NEW_ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))" 2>/dev/null || echo "")
+
+          if [ -z "$NEW_ACCESS" ]; then
+            echo "::warning::Token refresh failed — will attempt run with existing credentials"
+            exit 0
+          fi
+
+          # Write refreshed credentials
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          resp = json.load(sys.stdin)
+          creds = {'claudeAiOauth': resp}
+          with open('$CREDS_FILE', 'w') as f:
+              json.dump(creds, f)
+          "
+
+          # Update GitHub secret so future runs use the fresh token
+          cat "$CREDS_FILE" | gh secret set CLAUDE_LONG_LIVED_TOKEN --repo "$GITHUB_REPOSITORY"
+
+          echo "Token refreshed successfully"
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Run improve
+        id: claude
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          LENSES="${{ github.event.inputs.lenses }}"
+          [ -z "$LENSES" ] && LENSES="code quality,UI/UX improvements,documentation gaps,performance optimization,security hardening,refactoring opportunities"
+          PROMPT=$(sed "s|\$ARGUMENTS|$LENSES|g" .claude/commands/improve.md)
+          claude -p "$PROMPT" \
+            --max-turns 40 \
+            --verbose \
+            --mcp-config .mcp.json \
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect outcome
+        id: detect
+        if: always()
+        run: |
+          if [ "${{ steps.claude.outcome }}" = "success" ]; then
+            # Claude finished naturally — check if all lenses are done
+            if [ -f /tmp/improve-state.md ]; then
+              if grep -q "## Remaining Lenses" /tmp/improve-state.md 2>/dev/null && \
+                 grep -A100 "## Remaining Lenses" /tmp/improve-state.md | grep -q "^-"; then
+                echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Claude was interrupted (turn limit, rate limit, or error)
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Upload improve state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp/improve-state.md
+          if-no-files-found: ignore
+          overwrite: true
+
+  approve-round-2:
+    needs: improve
+    if: needs.improve.outputs.needs_continuation == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    environment: improve-continue
+    steps:
+      - run: echo "Round 2 approved — continuing improve"
+
+  auto-approve-round-2:
+    needs: improve
+    if: needs.improve.outputs.needs_continuation == 'true' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Scheduled run — auto-continuing round 2"
+
+  improve-round-2:
+    needs: [approve-round-2, auto-approve-round-2]
+    if: always() && (needs.approve-round-2.result == 'success' || needs.auto-approve-round-2.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      needs_continuation: ${{ steps.detect.outputs.needs_continuation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Refresh Claude credentials if needed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          CREDS_FILE="$HOME/.claude/.credentials.json"
+          if [ ! -f "$CREDS_FILE" ]; then
+            echo "No credentials file found"
+            exit 0
+          fi
+
+          # Check expiration
+          EXPIRES_AT=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('expiresAt', 0))
+          else:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+          NOW_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+          BUFFER_MS=300000  # 5 minutes
+
+          if [ "$EXPIRES_AT" -gt "$((NOW_MS + BUFFER_MS))" ] 2>/dev/null; then
+            echo "Token valid — expires in $(( (EXPIRES_AT - NOW_MS) / 60000 )) minutes"
+            exit 0
+          fi
+
+          echo "Token expired or expiring soon — attempting refresh..."
+
+          # Extract refresh token
+          REFRESH_TOKEN=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('refreshToken', ''))
+          " 2>/dev/null || echo "")
+
+          if [ -z "$REFRESH_TOKEN" ]; then
+            echo "::warning::No refresh token found — cannot auto-refresh"
+            exit 0
+          fi
+
+          # Refresh the token
+          RESPONSE=$(curl -s -X POST "https://api.anthropic.com/v1/oauth/token" \
+            -H "Content-Type: application/json" \
+            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$REFRESH_TOKEN\"}")
+
+          NEW_ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))" 2>/dev/null || echo "")
+
+          if [ -z "$NEW_ACCESS" ]; then
+            echo "::warning::Token refresh failed — will attempt run with existing credentials"
+            exit 0
+          fi
+
+          # Write refreshed credentials
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          resp = json.load(sys.stdin)
+          creds = {'claudeAiOauth': resp}
+          with open('$CREDS_FILE', 'w') as f:
+              json.dump(creds, f)
+          "
+
+          # Update GitHub secret so future runs use the fresh token
+          cat "$CREDS_FILE" | gh secret set CLAUDE_LONG_LIVED_TOKEN --repo "$GITHUB_REPOSITORY"
+
+          echo "Token refreshed successfully"
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Download improve state
+        uses: actions/download-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp
+
+      - name: Run improve (round 2)
+        id: claude
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          LENSES="${{ github.event.inputs.lenses }}"
+          [ -z "$LENSES" ] && LENSES="code quality,UI/UX improvements,documentation gaps,performance optimization,security hardening,refactoring opportunities"
+          PROMPT=$(sed "s|\$ARGUMENTS|$LENSES|g" .claude/commands/improve.md)
+          claude -p "$PROMPT" \
+            --max-turns 20 \
+            --verbose \
+            --mcp-config .mcp.json \
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect outcome
+        id: detect
+        if: always()
+        run: |
+          if [ "${{ steps.claude.outcome }}" = "success" ]; then
+            # Claude finished naturally — check if all lenses are done
+            if [ -f /tmp/improve-state.md ]; then
+              if grep -q "## Remaining Lenses" /tmp/improve-state.md 2>/dev/null && \
+                 grep -A100 "## Remaining Lenses" /tmp/improve-state.md | grep -q "^-"; then
+                echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Claude was interrupted (turn limit, rate limit, or error)
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Upload improve state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp/improve-state.md
+          if-no-files-found: ignore
+          overwrite: true
+
+  approve-round-3:
+    needs: improve-round-2
+    if: needs.improve-round-2.outputs.needs_continuation == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    environment: improve-continue
+    steps:
+      - run: echo "Round 3 approved — continuing improve"
+
+  auto-approve-round-3:
+    needs: improve-round-2
+    if: needs.improve-round-2.outputs.needs_continuation == 'true' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Scheduled run — auto-continuing round 3"
+
+  improve-round-3:
+    needs: [approve-round-3, auto-approve-round-3]
+    if: always() && (needs.approve-round-3.result == 'success' || needs.auto-approve-round-3.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      needs_continuation: ${{ steps.detect.outputs.needs_continuation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Refresh Claude credentials if needed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          CREDS_FILE="$HOME/.claude/.credentials.json"
+          if [ ! -f "$CREDS_FILE" ]; then
+            echo "No credentials file found"
+            exit 0
+          fi
+
+          # Check expiration
+          EXPIRES_AT=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('expiresAt', 0))
+          else:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+          NOW_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+          BUFFER_MS=300000  # 5 minutes
+
+          if [ "$EXPIRES_AT" -gt "$((NOW_MS + BUFFER_MS))" ] 2>/dev/null; then
+            echo "Token valid — expires in $(( (EXPIRES_AT - NOW_MS) / 60000 )) minutes"
+            exit 0
+          fi
+
+          echo "Token expired or expiring soon — attempting refresh..."
+
+          # Extract refresh token
+          REFRESH_TOKEN=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('refreshToken', ''))
+          " 2>/dev/null || echo "")
+
+          if [ -z "$REFRESH_TOKEN" ]; then
+            echo "::warning::No refresh token found — cannot auto-refresh"
+            exit 0
+          fi
+
+          # Refresh the token
+          RESPONSE=$(curl -s -X POST "https://api.anthropic.com/v1/oauth/token" \
+            -H "Content-Type: application/json" \
+            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$REFRESH_TOKEN\"}")
+
+          NEW_ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))" 2>/dev/null || echo "")
+
+          if [ -z "$NEW_ACCESS" ]; then
+            echo "::warning::Token refresh failed — will attempt run with existing credentials"
+            exit 0
+          fi
+
+          # Write refreshed credentials
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          resp = json.load(sys.stdin)
+          creds = {'claudeAiOauth': resp}
+          with open('$CREDS_FILE', 'w') as f:
+              json.dump(creds, f)
+          "
+
+          # Update GitHub secret so future runs use the fresh token
+          cat "$CREDS_FILE" | gh secret set CLAUDE_LONG_LIVED_TOKEN --repo "$GITHUB_REPOSITORY"
+
+          echo "Token refreshed successfully"
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Download improve state
+        uses: actions/download-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp
+
+      - name: Run improve (round 3)
+        id: claude
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          LENSES="${{ github.event.inputs.lenses }}"
+          [ -z "$LENSES" ] && LENSES="code quality,UI/UX improvements,documentation gaps,performance optimization,security hardening,refactoring opportunities"
+          PROMPT=$(sed "s|\$ARGUMENTS|$LENSES|g" .claude/commands/improve.md)
+          claude -p "$PROMPT" \
+            --max-turns 20 \
+            --verbose \
+            --mcp-config .mcp.json \
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect outcome
+        id: detect
+        if: always()
+        run: |
+          if [ "${{ steps.claude.outcome }}" = "success" ]; then
+            # Claude finished naturally — check if all lenses are done
+            if [ -f /tmp/improve-state.md ]; then
+              if grep -q "## Remaining Lenses" /tmp/improve-state.md 2>/dev/null && \
+                 grep -A100 "## Remaining Lenses" /tmp/improve-state.md | grep -q "^-"; then
+                echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Claude was interrupted (turn limit, rate limit, or error)
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Upload improve state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp/improve-state.md
+          if-no-files-found: ignore
+          overwrite: true
+
+  approve-round-4:
+    needs: improve-round-3
+    if: needs.improve-round-3.outputs.needs_continuation == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    environment: improve-continue
+    steps:
+      - run: echo "Round 4 approved — continuing improve"
+
+  auto-approve-round-4:
+    needs: improve-round-3
+    if: needs.improve-round-3.outputs.needs_continuation == 'true' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Scheduled run — auto-continuing round 4"
+
+  improve-round-4:
+    needs: [approve-round-4, auto-approve-round-4]
+    if: always() && (needs.approve-round-4.result == 'success' || needs.auto-approve-round-4.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      needs_continuation: ${{ steps.detect.outputs.needs_continuation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Refresh Claude credentials if needed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          CREDS_FILE="$HOME/.claude/.credentials.json"
+          if [ ! -f "$CREDS_FILE" ]; then
+            echo "No credentials file found"
+            exit 0
+          fi
+
+          # Check expiration
+          EXPIRES_AT=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('expiresAt', 0))
+          else:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+          NOW_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+          BUFFER_MS=300000  # 5 minutes
+
+          if [ "$EXPIRES_AT" -gt "$((NOW_MS + BUFFER_MS))" ] 2>/dev/null; then
+            echo "Token valid — expires in $(( (EXPIRES_AT - NOW_MS) / 60000 )) minutes"
+            exit 0
+          fi
+
+          echo "Token expired or expiring soon — attempting refresh..."
+
+          # Extract refresh token
+          REFRESH_TOKEN=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('refreshToken', ''))
+          " 2>/dev/null || echo "")
+
+          if [ -z "$REFRESH_TOKEN" ]; then
+            echo "::warning::No refresh token found — cannot auto-refresh"
+            exit 0
+          fi
+
+          # Refresh the token
+          RESPONSE=$(curl -s -X POST "https://api.anthropic.com/v1/oauth/token" \
+            -H "Content-Type: application/json" \
+            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$REFRESH_TOKEN\"}")
+
+          NEW_ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))" 2>/dev/null || echo "")
+
+          if [ -z "$NEW_ACCESS" ]; then
+            echo "::warning::Token refresh failed — will attempt run with existing credentials"
+            exit 0
+          fi
+
+          # Write refreshed credentials
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          resp = json.load(sys.stdin)
+          creds = {'claudeAiOauth': resp}
+          with open('$CREDS_FILE', 'w') as f:
+              json.dump(creds, f)
+          "
+
+          # Update GitHub secret so future runs use the fresh token
+          cat "$CREDS_FILE" | gh secret set CLAUDE_LONG_LIVED_TOKEN --repo "$GITHUB_REPOSITORY"
+
+          echo "Token refreshed successfully"
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Download improve state
+        uses: actions/download-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp
+
+      - name: Run improve (round 4)
+        id: claude
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          LENSES="${{ github.event.inputs.lenses }}"
+          [ -z "$LENSES" ] && LENSES="code quality,UI/UX improvements,documentation gaps,performance optimization,security hardening,refactoring opportunities"
+          PROMPT=$(sed "s|\$ARGUMENTS|$LENSES|g" .claude/commands/improve.md)
+          claude -p "$PROMPT" \
+            --max-turns 20 \
+            --verbose \
+            --mcp-config .mcp.json \
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect outcome
+        id: detect
+        if: always()
+        run: |
+          if [ "${{ steps.claude.outcome }}" = "success" ]; then
+            # Claude finished naturally — check if all lenses are done
+            if [ -f /tmp/improve-state.md ]; then
+              if grep -q "## Remaining Lenses" /tmp/improve-state.md 2>/dev/null && \
+                 grep -A100 "## Remaining Lenses" /tmp/improve-state.md | grep -q "^-"; then
+                echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Claude was interrupted (turn limit, rate limit, or error)
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Upload improve state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp/improve-state.md
+          if-no-files-found: ignore
+          overwrite: true
+
+  approve-round-5:
+    needs: improve-round-4
+    if: needs.improve-round-4.outputs.needs_continuation == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    environment: improve-continue
+    steps:
+      - run: echo "Round 5 approved — continuing improve"
+
+  auto-approve-round-5:
+    needs: improve-round-4
+    if: needs.improve-round-4.outputs.needs_continuation == 'true' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Scheduled run — auto-continuing round 5"
+
+  improve-round-5:
+    needs: [approve-round-5, auto-approve-round-5]
+    if: always() && (needs.approve-round-5.result == 'success' || needs.auto-approve-round-5.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      needs_continuation: ${{ steps.detect.outputs.needs_continuation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Refresh Claude credentials if needed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          CREDS_FILE="$HOME/.claude/.credentials.json"
+          if [ ! -f "$CREDS_FILE" ]; then
+            echo "No credentials file found"
+            exit 0
+          fi
+
+          # Check expiration
+          EXPIRES_AT=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('expiresAt', 0))
+          else:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+          NOW_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+          BUFFER_MS=300000  # 5 minutes
+
+          if [ "$EXPIRES_AT" -gt "$((NOW_MS + BUFFER_MS))" ] 2>/dev/null; then
+            echo "Token valid — expires in $(( (EXPIRES_AT - NOW_MS) / 60000 )) minutes"
+            exit 0
+          fi
+
+          echo "Token expired or expiring soon — attempting refresh..."
+
+          # Extract refresh token
+          REFRESH_TOKEN=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('refreshToken', ''))
+          " 2>/dev/null || echo "")
+
+          if [ -z "$REFRESH_TOKEN" ]; then
+            echo "::warning::No refresh token found — cannot auto-refresh"
+            exit 0
+          fi
+
+          # Refresh the token
+          RESPONSE=$(curl -s -X POST "https://api.anthropic.com/v1/oauth/token" \
+            -H "Content-Type: application/json" \
+            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$REFRESH_TOKEN\"}")
+
+          NEW_ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))" 2>/dev/null || echo "")
+
+          if [ -z "$NEW_ACCESS" ]; then
+            echo "::warning::Token refresh failed — will attempt run with existing credentials"
+            exit 0
+          fi
+
+          # Write refreshed credentials
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          resp = json.load(sys.stdin)
+          creds = {'claudeAiOauth': resp}
+          with open('$CREDS_FILE', 'w') as f:
+              json.dump(creds, f)
+          "
+
+          # Update GitHub secret so future runs use the fresh token
+          cat "$CREDS_FILE" | gh secret set CLAUDE_LONG_LIVED_TOKEN --repo "$GITHUB_REPOSITORY"
+
+          echo "Token refreshed successfully"
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Download improve state
+        uses: actions/download-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp
+
+      - name: Run improve (round 5)
+        id: claude
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          LENSES="${{ github.event.inputs.lenses }}"
+          [ -z "$LENSES" ] && LENSES="code quality,UI/UX improvements,documentation gaps,performance optimization,security hardening,refactoring opportunities"
+          PROMPT=$(sed "s|\$ARGUMENTS|$LENSES|g" .claude/commands/improve.md)
+          claude -p "$PROMPT" \
+            --max-turns 20 \
+            --verbose \
+            --mcp-config .mcp.json \
+            --allowedTools "Read,Write,Bash(find *),Bash(wc *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Detect outcome
+        id: detect
+        if: always()
+        run: |
+          if [ "${{ steps.claude.outcome }}" = "success" ]; then
+            # Claude finished naturally — check if all lenses are done
+            if [ -f /tmp/improve-state.md ]; then
+              if grep -q "## Remaining Lenses" /tmp/improve-state.md 2>/dev/null && \
+                 grep -A100 "## Remaining Lenses" /tmp/improve-state.md | grep -q "^-"; then
+                echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Claude was interrupted (turn limit, rate limit, or error)
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Upload improve state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: improve-state
+          path: /tmp/improve-state.md
+          if-no-files-found: ignore
+          overwrite: true

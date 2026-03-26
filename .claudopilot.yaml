@@ -1,0 +1,66 @@
+version: 0.1.0
+project:
+  name: claudopilot
+  type: generic
+  rootDir: /home/bob/projects/buzzwordmojo/claudopilot
+  repos:
+    - name: claudopilot
+      path: .
+      type: generic
+      remote: buzzwordmojo/claudopilot
+      role: primary
+pm:
+  tool: clickup
+  workspaceId: '9013438093'
+  spaceId: '901313712835'
+  listId: '901326602739'
+  statuses:
+    idea: idea
+    planning: planning
+    blocked: blocked
+    awaitingApproval: awaiting approval
+    approved: approved
+    building: building
+    inReview: in review
+    done: done
+github:
+  owner: buzzwordmojo
+  repos:
+    - claudopilot
+  anthropicKeySecretName: ANTHROPIC_API_KEY
+  commitName: buzzwordmojo
+  commitEmail: bob@buzzwordmojo.com
+cloudflare:
+  workerName: claudopilot-claudopilot
+redTeam:
+  maxRounds: 5
+  blockingSeverity: high
+  domainLenses: []
+  blockedAssignee: task_creator
+improve:
+  enabled: true
+  lenses:
+    - code quality
+    - UI/UX improvements
+    - documentation gaps
+    - performance optimization
+    - security hardening
+    - refactoring opportunities
+competitors:
+  enabled: true
+  projectDescription: This _IS_ claudopilot.  a PM integration for claude powerered developlment
+  targetUsers: non-technical founders or people managing multiple projects
+  searchTerms:
+    - claude pm tool
+  domain: This _IS_ claudopilot for non-technical founders or people managing
+    multiple projects
+dream:
+  enabled: true
+feedback:
+  enabled: true
+assignees:
+  blockedAssignee: task_creator
+  unassignOnAutoStart: true
+autoApprove:
+  enabled: true
+  tagName: auto-approve

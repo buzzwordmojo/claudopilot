@@ -1,0 +1,13 @@
+# CodeRabbit configuration
+# Customize path_instructions for your project's patterns
+
+reviews:
+  auto_review:
+    enabled: true
+  path_instructions:
+    - path: "src/**"
+      instructions: |
+        - Flag missing tests
+        - Flag potential security issues
+        - Flag unnecessary complexity
+        - Check for proper error handling

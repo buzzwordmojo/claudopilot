@@ -1,0 +1,146 @@
+name: Claudopilot Competitors
+on:
+  workflow_dispatch:
+    inputs:
+      competitors:
+        description: "Comma-separated competitor names to research (leave empty for full scan)"
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
+
+jobs:
+  competitors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Refresh Claude credentials if needed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          CREDS_FILE="$HOME/.claude/.credentials.json"
+          if [ ! -f "$CREDS_FILE" ]; then
+            echo "No credentials file found"
+            exit 0
+          fi
+
+          # Check expiration
+          EXPIRES_AT=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('expiresAt', 0))
+          else:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+          NOW_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+          BUFFER_MS=300000  # 5 minutes
+
+          if [ "$EXPIRES_AT" -gt "$((NOW_MS + BUFFER_MS))" ] 2>/dev/null; then
+            echo "Token valid — expires in $(( (EXPIRES_AT - NOW_MS) / 60000 )) minutes"
+            exit 0
+          fi
+
+          echo "Token expired or expiring soon — attempting refresh..."
+
+          # Extract refresh token
+          REFRESH_TOKEN=$(python3 -c "
+          import json
+          with open('$CREDS_FILE') as f:
+              creds = json.load(f)
+          oauth = creds.get('claudeAiOauth', {})
+          if isinstance(oauth, dict):
+              print(oauth.get('refreshToken', ''))
+          " 2>/dev/null || echo "")
+
+          if [ -z "$REFRESH_TOKEN" ]; then
+            echo "::warning::No refresh token found — cannot auto-refresh"
+            exit 0
+          fi
+
+          # Refresh the token
+          RESPONSE=$(curl -s -X POST "https://api.anthropic.com/v1/oauth/token" \
+            -H "Content-Type: application/json" \
+            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$REFRESH_TOKEN\"}")
+
+          NEW_ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('accessToken',''))" 2>/dev/null || echo "")
+
+          if [ -z "$NEW_ACCESS" ]; then
+            echo "::warning::Token refresh failed — will attempt run with existing credentials"
+            exit 0
+          fi
+
+          # Write refreshed credentials
+          echo "$RESPONSE" | python3 -c "
+          import json, sys
+          resp = json.load(sys.stdin)
+          creds = {'claudeAiOauth': resp}
+          with open('$CREDS_FILE', 'w') as f:
+              json.dump(creds, f)
+          "
+
+          # Update GitHub secret so future runs use the fresh token
+          cat "$CREDS_FILE" | gh secret set CLAUDE_LONG_LIVED_TOKEN --repo "$GITHUB_REPOSITORY"
+
+          echo "Token refreshed successfully"
+
+      - name: Inject secrets into MCP config
+        run: |
+          sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Run competitor analysis
+        id: claude
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          COMPETITORS="${{ github.event.inputs.competitors }}"
+          PROMPT=$(sed "s|\$ARGUMENTS|$COMPETITORS|g" .claude/commands/competitors.md)
+          claude -p "$PROMPT" \
+            --max-turns 40 \
+            --verbose \
+            --mcp-config .mcp.json \
+            --allowedTools "Read,Write,Bash(mkdir *),WebSearch,WebFetch,mcp__clickup__clickup_create_task" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Commit results
+        run: |
+          git config user.name "buzzwordmojo"
+          git config user.email "bob@buzzwordmojo.com"
+          if [ -f context/competitors.json ]; then
+            git add context/competitors.json context/competitors.md
+            git diff --cached --quiet || git commit -m "chore: update competitive landscape"
+            git checkout -- . 2>/dev/null || true
+            git clean -fd 2>/dev/null || true
+            git pull --rebase origin main
+            git push
+          else
+            echo "No competitor data generated"
+          fi
+
+      - name: Report outcome
+        if: always()
+        run: |
+          if [ "${{ steps.claude.outcome }}" = "success" ]; then
+            echo "✅ Competitor analysis complete"
+          else
+            echo "❌ Competitor analysis failed — check logs"
+            exit 1
+          fi
