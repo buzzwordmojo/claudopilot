@@ -36,6 +36,7 @@ import type {
   AutomationsConfig,
   AutomationRule,
   AutomationAction,
+  VisualVerificationConfig,
 } from "../types.js";
 import { DEFAULT_STATUSES, DEFAULT_IMPROVE_LENSES } from "../types.js";
 import { suggestDomainLenses } from "../utils/analyze.js";
@@ -486,6 +487,11 @@ export async function init(options: InitOptions): Promise<void> {
 
   const deploymentConfig = await setupDeployment(projectType, existing?.deployment);
 
+  const visualVerificationConfig = await setupVisualVerification(
+    !!deploymentConfig && deploymentConfig.provider !== "none",
+    existing?.visualVerification,
+  );
+
   // ─── Install files ───
   step++;
   ui.step(step, totalSteps, "Installing project files...");
@@ -509,6 +515,7 @@ export async function init(options: InitOptions): Promise<void> {
     dream: dreamConfig,
     feedback: feedbackConfig,
     deployment: deploymentConfig,
+    visualVerification: visualVerificationConfig,
     assignees: assigneesConfig,
     autoApprove: autoApproveConfig,
     automations: automationsConfig,
@@ -1320,6 +1327,48 @@ export async function setupDeployment(
     railwayProjectId,
     railwayServiceId,
     railwayApiToken,
+  };
+}
+
+// ─── Visual Verification Setup ───
+
+export async function setupVisualVerification(
+  hasDeployment: boolean,
+  existing?: VisualVerificationConfig
+): Promise<VisualVerificationConfig | undefined> {
+  if (!hasDeployment) {
+    return undefined;
+  }
+
+  const enable = await confirm({
+    message: "Enable visual verification? (Claude screenshots preview deployments and posts to PR)",
+    default: existing?.enabled ?? false,
+  });
+
+  if (!enable) {
+    return undefined;
+  }
+
+  const routesInput = await input({
+    message: "Routes to always verify (comma-separated, e.g. /,/dashboard,/settings):",
+    default: existing?.alwaysCheckRoutes?.join(", ") ?? "/",
+  });
+
+  const maxScreenshots = await input({
+    message: "Maximum screenshots per verification:",
+    default: String(existing?.maxScreenshots ?? 10),
+  });
+
+  const includeVideo = await confirm({
+    message: "Record video/GIF of the most affected page?",
+    default: existing?.includeVideo ?? false,
+  });
+
+  return {
+    enabled: true,
+    alwaysCheckRoutes: routesInput.split(",").map((r) => r.trim()).filter(Boolean),
+    maxScreenshots: parseInt(maxScreenshots, 10) || 10,
+    includeVideo,
   };
 }
 

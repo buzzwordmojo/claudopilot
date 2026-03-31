@@ -8,6 +8,14 @@ export interface DeploymentConfig {
   pollInterval?: number;  // seconds, default 20
 }
 
+export interface VisualVerificationConfig {
+  enabled: boolean;
+  alwaysCheckRoutes?: string[];     // routes to always screenshot, e.g. ["/", "/dashboard"]
+  viewport?: { width: number; height: number };  // default 1280x720
+  maxScreenshots?: number;          // cap to prevent runaway, default 10
+  includeVideo?: boolean;           // record video of navigation
+}
+
 export interface AssigneeConfig {
   blockedAssignee: "task_creator" | "specific";
   blockedAssigneeUserId?: string;
@@ -31,6 +39,7 @@ export interface ClaudopilotConfig {
   competitors?: CompetitorsConfig;
   dream?: DreamConfig;
   deployment?: DeploymentConfig;
+  visualVerification?: VisualVerificationConfig;
   assignees?: AssigneeConfig;
   autoApprove?: AutoApproveConfig;
   automations?: AutomationsConfig;

@@ -20,6 +20,7 @@ import {
   configDream,
   configAutomations,
   configDeployment,
+  configVisualVerification,
   configAssignees,
   configAutoApprove,
 } from "./commands/config.js";
@@ -101,6 +102,11 @@ configCmd
   .command("deployment")
   .description("Preview deployment provider (Vercel, Railway, none)")
   .action(configDeployment);
+
+configCmd
+  .command("visual-verification")
+  .description("Visual verification of preview deployments (screenshots + video)")
+  .action(configVisualVerification);
 
 configCmd
   .command("assignees")

@@ -264,6 +264,116 @@ function generateDeploymentDetectionStep(config: ClaudopilotConfig): string {
   }
 }
 
+function generateVisualVerificationSteps(config: ClaudopilotConfig): string {
+  const vv = config.visualVerification;
+  if (!vv?.enabled) return "";
+
+  const viewport = vv.viewport ?? { width: 1280, height: 720 };
+  const maxScreenshots = vv.maxScreenshots ?? 10;
+  const alwaysRoutes = vv.alwaysCheckRoutes?.length
+    ? vv.alwaysCheckRoutes.map((r) => `"${r}"`).join(", ")
+    : '"/"';
+
+  const videoInstructions = vv.includeVideo
+    ? `
+    6. For the most important page (the one most affected by the changes), also record a short video:
+       - Use Playwright's video recording: \`context = await browser.newContext({ recordVideo: { dir: '/tmp/screenshots/', size: { width: ${viewport.width}, height: ${viewport.height} } } })\`
+       - Navigate through the page interactions (scroll, click interactive elements)
+       - Close the context to finalize the video
+       - Convert to GIF: \`ffmpeg -i <video.webm> -vf "fps=10,scale=${viewport.width}:-1" -loop 0 /tmp/screenshots/interaction.gif\``
+    : "";
+
+  const canVerify = "steps.check.outputs.has_commits == 'true' && steps.deployment.outputs.preview_url != ''";
+
+  return `
+      - name: Setup visual verification
+        if: ${canVerify}
+        run: |
+          npx playwright install --with-deps chromium
+          npm install -g @anthropic-ai/claude-code
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+
+      - name: Visual Verification
+        if: ${canVerify}
+        id: visual_verify
+        continue-on-error: true
+        env:
+          PREVIEW_URL: \${{ steps.deployment.outputs.preview_url }}
+          ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p /tmp/screenshots
+          git diff origin/main...HEAD > /tmp/pr-diff.txt
+
+          claude -p "You are performing visual verification of a preview deployment.
+
+          PREVIEW URL: \$PREVIEW_URL
+
+          INSTRUCTIONS:
+          1. Read /tmp/pr-diff.txt to understand what files changed in this PR.
+          2. Analyze the project structure to identify the routing convention:
+             - Next.js App Router: look for src/app/**/page.tsx or app/**/page.tsx
+             - Next.js Pages Router: look for pages/**/*.tsx
+             - Other frameworks: look for route definitions
+          3. From the diff, determine which routes/pages are AFFECTED by the changes.
+             Map changed files to their corresponding URL paths.
+          4. Combine affected routes with these always-check routes: [${alwaysRoutes}]
+             Deduplicate the list. Cap at ${maxScreenshots} total routes.
+          5. Write a Node.js script at /tmp/screenshot.js using playwright that:
+             - Launches chromium (headless)
+             - For each route, navigates to PREVIEW_URL + route
+             - Waits for networkidle
+             - Takes a full-page screenshot at ${viewport.width}x${viewport.height}
+             - Saves to /tmp/screenshots/ with descriptive filenames (e.g., home.png, dashboard.png)
+             - Handles 404s or errors gracefully (log and continue)
+             - Closes the browser when done${videoInstructions}
+          6. Run the script: node /tmp/screenshot.js
+          7. List what was captured: ls -la /tmp/screenshots/
+          8. Write a brief summary to /tmp/screenshots/SUMMARY.md listing each route and what you observed.
+
+          RULES:
+          - Do NOT modify any project source files
+          - Maximum ${maxScreenshots} screenshots
+          - If a page fails to load, note it in the summary and continue
+          - Focus on public-facing pages, skip admin/auth-protected routes unless they appear in always-check" \\
+            --max-turns 15 \\
+            --allowedTools "Read,Bash,Write" 2>&1 | tee /tmp/visual-verify.log
+
+          SCREENSHOT_COUNT=$(ls /tmp/screenshots/*.png 2>/dev/null | wc -l)
+          echo "screenshot_count=\$SCREENSHOT_COUNT" >> "\$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.visual_verify.outcome == 'success' && steps.visual_verify.outputs.screenshot_count != '0'
+        with:
+          name: visual-verification
+          path: /tmp/screenshots/
+          retention-days: 30
+
+      - name: Post visual verification to PR
+        if: steps.visual_verify.outcome == 'success' && steps.pr.outputs.pr_url != ''
+        env:
+          GH_TOKEN: \${{ secrets.GH_PAT }}
+          PR_URL: \${{ steps.pr.outputs.pr_url }}
+        run: |
+          PR_NUMBER=$(echo "\$PR_URL" | grep -oE '[0-9]+$')
+          SCREENSHOT_COUNT=\${{ steps.visual_verify.outputs.screenshot_count }}
+          RUN_URL="\$GITHUB_SERVER_URL/\${{ github.repository }}/actions/runs/\${{ github.run_id }}"
+
+          COMMENT="## 📸 Visual Verification\\n\\n"
+          COMMENT="\${COMMENT}**\${SCREENSHOT_COUNT} screenshots captured** of affected routes.\\n\\n"
+
+          if [ -f /tmp/screenshots/SUMMARY.md ]; then
+            SUMMARY=$(cat /tmp/screenshots/SUMMARY.md)
+            COMMENT="\${COMMENT}\${SUMMARY}\\n\\n"
+          fi
+
+          COMMENT="\${COMMENT}📦 [Download screenshots](\${RUN_URL}#artifacts) from workflow artifacts.\\n"
+          COMMENT="\${COMMENT}\\n---\\n*Automated by claudopilot visual verification*"
+
+          gh pr comment "\$PR_NUMBER" --body "$(echo -e "\$COMMENT")"
+`;
+}
+
 function generateAuthRefreshStep(): string {
   return `
       - name: Refresh Claude credentials if needed
@@ -743,7 +853,7 @@ ${companionPushCommands}
     name: 🔗 Finalize (PR + Preview)
     needs: implement
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${config.visualVerification?.enabled ? 25 : 15}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -795,6 +905,7 @@ ${companionPrLogic}
           echo "all_prs=\$ALL_PRS" >> "\$GITHUB_OUTPUT"
 
 ${generateDeploymentDetectionStep(config)}
+${generateVisualVerificationSteps(config)}
 
       - name: Post results to ClickUp
         if: steps.check.outputs.has_commits == 'true'
@@ -802,6 +913,7 @@ ${generateDeploymentDetectionStep(config)}
           PR_URL: \${{ steps.pr.outputs.pr_url }}
           ALL_PRS: \${{ steps.pr.outputs.all_prs }}
           PREVIEW_URL: \${{ steps.deployment.outputs.preview_url }}
+          SCREENSHOT_COUNT: \${{ steps.visual_verify.outputs.screenshot_count }}
           IMPL_OUTCOME: \${{ needs.implement.outputs.outcome }}
           FAILURE_REASON: \${{ needs.implement.outputs.failure_reason }}
           RESET_INFO: \${{ needs.implement.outputs.reset_info }}
@@ -810,6 +922,7 @@ ${generateDeploymentDetectionStep(config)}
             MSG="Implementation complete."
             [ -n "\$ALL_PRS" ] && MSG="\$MSG\\\\n\\\\n\$ALL_PRS"
             [ -n "\$PREVIEW_URL" ] && MSG="\$MSG\\\\n🔗 Preview: \$PREVIEW_URL"
+            [ -n "\$SCREENSHOT_COUNT" ] && [ "\$SCREENSHOT_COUNT" -gt 0 ] 2>/dev/null && MSG="\$MSG\\\\n📸 Visual verification: \$SCREENSHOT_COUNT screenshots captured"
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\

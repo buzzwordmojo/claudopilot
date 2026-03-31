@@ -11,6 +11,7 @@ import {
   setupCloudflare,
   setupRedTeam,
   setupDeployment,
+  setupVisualVerification,
   setupImprove,
   setupCompetitors,
   setupDream,
@@ -308,5 +309,24 @@ export async function configDeployment(): Promise<void> {
     await saveSecrets({ RAILWAY_API_TOKEN: deploymentResult.railwayApiToken });
   }
 
+  await saveAndUpdate(config);
+}
+
+// ─── config visual-verification ───
+
+export async function configVisualVerification(): Promise<void> {
+  ui.banner();
+  const config = await loadConfig();
+  requireConfig(config);
+
+  ui.header("Visual Verification");
+
+  const hasDeployment = !!config.deployment && config.deployment.provider !== "none";
+  if (!hasDeployment) {
+    ui.warn("Visual verification requires a deployment provider. Run `claudopilot config deployment` first.");
+    return;
+  }
+
+  config.visualVerification = await setupVisualVerification(hasDeployment, config.visualVerification);
   await saveAndUpdate(config);
 }
