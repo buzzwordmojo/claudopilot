@@ -491,12 +491,14 @@ jobs:
 
 
 
+
       - name: Post results to ClickUp
         if: steps.check.outputs.has_commits == 'true'
         env:
           PR_URL: ${{ steps.pr.outputs.pr_url }}
           ALL_PRS: ${{ steps.pr.outputs.all_prs }}
           PREVIEW_URL: ${{ steps.deployment.outputs.preview_url }}
+          SCREENSHOT_COUNT: ${{ steps.visual_verify.outputs.screenshot_count }}
           IMPL_OUTCOME: ${{ needs.implement.outputs.outcome }}
           FAILURE_REASON: ${{ needs.implement.outputs.failure_reason }}
           RESET_INFO: ${{ needs.implement.outputs.reset_info }}
@@ -505,6 +507,7 @@ jobs:
             MSG="Implementation complete."
             [ -n "$ALL_PRS" ] && MSG="$MSG\\n\\n$ALL_PRS"
             [ -n "$PREVIEW_URL" ] && MSG="$MSG\\n🔗 Preview: $PREVIEW_URL"
+            [ -n "$SCREENSHOT_COUNT" ] && [ "$SCREENSHOT_COUNT" -gt 0 ] 2>/dev/null && MSG="$MSG\\n📸 Visual verification: $SCREENSHOT_COUNT screenshots captured"
             curl -s -X POST "https://api.clickup.com/api/v2/task/$TASK_ID/comment" \
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \

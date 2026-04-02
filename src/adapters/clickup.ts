@@ -133,6 +133,27 @@ export class ClickUpAdapter implements PMAdapter {
     return { id: data.webhook?.id ?? data.id };
   }
 
+  async getWebhooks(
+    workspaceId: string
+  ): Promise<
+    {
+      id: string;
+      endpoint: string;
+      events: string[];
+      health: { status: string; fail_count: number };
+    }[]
+  > {
+    const data = await this.request<{
+      webhooks: {
+        id: string;
+        endpoint: string;
+        events: string[];
+        health: { status: string; fail_count: number };
+      }[];
+    }>(`/team/${workspaceId}/webhook`);
+    return data.webhooks;
+  }
+
   async createList(
     spaceId: string,
     name: string

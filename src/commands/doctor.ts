@@ -302,6 +302,63 @@ export async function doctor(): Promise<void> {
     warned++;
   }
 
+  // Check ClickUp webhook health
+  if (config.cloudflare?.workerUrl && clickupKey && config.pm.workspaceId) {
+    const whSpinner = ui.spinner("Checking ClickUp webhook health...");
+    try {
+      const adapter = new ClickUpAdapter(clickupKey);
+      const webhooks = await adapter.getWebhooks(config.pm.workspaceId);
+      const workerHost = new URL(config.cloudflare.workerUrl).hostname;
+      const matching = webhooks.filter((w) =>
+        w.endpoint.includes(workerHost)
+      );
+
+      if (matching.length === 0) {
+        whSpinner.fail(
+          "  ClickUp webhook: no webhook registered for worker URL — events won't reach GitHub Actions"
+        );
+        failed++;
+      } else if (matching.length > 1) {
+        whSpinner.warn(
+          `  ClickUp webhook: ${matching.length} duplicate webhooks for worker (may cause double-triggers)`
+        );
+        warned++;
+      } else {
+        const wh = matching[0];
+        if (wh.health.status === "suspended") {
+          whSpinner.fail(
+            `  ClickUp webhook: SUSPENDED (${wh.health.fail_count} failures) — re-register with 'claudopilot init'`
+          );
+          failed++;
+        } else if (wh.health.status === "failing") {
+          whSpinner.warn(
+            `  ClickUp webhook: FAILING (${wh.health.fail_count} failures) — check worker secret matches`
+          );
+          warned++;
+        } else {
+          // Verify the secret in the webhook URL matches the config
+          const configUrl = new URL(config.cloudflare.workerUrl);
+          const whUrl = new URL(wh.endpoint);
+          if (
+            configUrl.searchParams.get("secret") !==
+            whUrl.searchParams.get("secret")
+          ) {
+            whSpinner.warn(
+              "  ClickUp webhook: active but secret mismatch with .claudopilot.yaml worker URL"
+            );
+            warned++;
+          } else {
+            whSpinner.succeed("  ClickUp webhook: active, secret matches");
+            passed++;
+          }
+        }
+      }
+    } catch {
+      whSpinner.fail("  ClickUp webhook: failed to query webhooks");
+      failed++;
+    }
+  }
+
   // Summary
   ui.blank();
   ui.header("Summary");
