@@ -84,7 +84,7 @@ export async function init(options: InitOptions): Promise<void> {
       {
         label: "GitHub Personal Access Token",
         detail:
-          'github.com → Settings → Developer settings → Fine-grained tokens → "Contents", "Actions", and "Secrets" repo permissions',
+          'github.com → Settings → Developer settings → Fine-grained tokens → "Contents", "Actions", "Secrets", and "Environments" repo permissions',
       },
       ...(options.skipCloud
         ? []
@@ -646,6 +646,7 @@ export async function init(options: InitOptions): Promise<void> {
         const stderr = error?.stderr?.toString?.() || error?.message || String(error);
         envSpinner.fail(`  Could not create environment: ${stderr.trim()}`);
         ui.warn("You can create the 'improve-continue' environment manually in GitHub repo settings.");
+        ui.hint(["This usually means your GitHub PAT is missing the 'Environments: Read and write' permission."]);
       }
     }
   }
@@ -777,6 +778,7 @@ export async function setupGitHub(savedPat?: string, existing?: GitHubConfig): P
       "   • Contents: Read and write",
       "   • Actions: Read and write",
       "   • Secrets: Read and write (to set ANTHROPIC_API_KEY)",
+      "   • Environments: Read and write (to create approval gates)",
       "   • Metadata: Read-only (auto-selected)",
       '6. Click "Generate token" and copy it',
       "",
