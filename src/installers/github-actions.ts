@@ -451,6 +451,26 @@ function generateAuthRefreshStep(): string {
 `;
 }
 
+function generateMcpConfigStep(config: ClaudopilotConfig): string {
+  const workspaceId = config.pm.workspaceId ?? "";
+  return `      - name: Generate MCP config
+        run: |
+          cat > .mcp.json << MCPEOF
+          {
+            "mcpServers": {
+              "clickup": {
+                "command": "node",
+                "args": [".claude/mcp-server/index.js"],
+                "env": {
+                  "CLICKUP_API_KEY": "\$CLICKUP_API_KEY",
+                  "CLICKUP_WORKSPACE_ID": "${workspaceId}"
+                }
+              }
+            }
+          }
+          MCPEOF`;
+}
+
 function generateWorkerWorkflow(config: ClaudopilotConfig): string {
   const companions = getCompanionRepos(config);
   const hasCompanions = companions.length > 0;
@@ -616,9 +636,7 @@ ${planCompanionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 ${generateAuthRefreshStep()}
-      - name: Inject secrets into MCP config
-        run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+\${generateMcpConfigStep(config)}
 
       - name: Run planning loop
         id: claude
@@ -775,9 +793,7 @@ ${implCompanionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 ${generateAuthRefreshStep()}
-      - name: Inject secrets into MCP config
-        run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+\${generateMcpConfigStep(config)}
 
       - name: Write code
         id: claude
@@ -992,9 +1008,7 @@ ${generateVisualVerificationSteps(config)}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 ${generateAuthRefreshStep()}
-      - name: Inject secrets into MCP config
-        run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+\${generateMcpConfigStep(config)}
 
       - name: Collect PR feedback
         id: feedback
@@ -1154,9 +1168,7 @@ ${companionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 ${generateAuthRefreshStep()}
-      - name: Inject secrets into MCP config
-        run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json`;
+\${generateMcpConfigStep(config)}`;
 }
 
 function generateImproveDetectStep(): string {
@@ -1346,9 +1358,7 @@ ${companionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 ${generateAuthRefreshStep()}
-      - name: Inject secrets into MCP config
-        run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+\${generateMcpConfigStep(config)}
 
       - name: Run competitor analysis
         id: claude
@@ -1429,9 +1439,7 @@ ${companionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 ${generateAuthRefreshStep()}
-      - name: Inject secrets into MCP config
-        run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+\${generateMcpConfigStep(config)}
 
       - name: Run dream engine
         id: claude
@@ -1495,9 +1503,7 @@ ${companionCheckouts}
           mkdir -p ~/.claude
           echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
 ${generateAuthRefreshStep()}
-      - name: Inject secrets into MCP config
-        run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+\${generateMcpConfigStep(config)}
 
       - name: Run automations dispatch
         id: claude
