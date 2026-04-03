@@ -310,6 +310,7 @@ export async function init(options: InitOptions): Promise<void> {
                   `-f[] events=pull_request_review ` +
                   `-f[] events=check_run ` +
                   `-f[] events=issue_comment ` +
+                  `-f[] events=pull_request ` +
                   `-f active=true`,
                   {
                     env: { ...process.env, GH_TOKEN: githubConfig.pat },
@@ -541,8 +542,9 @@ export async function init(options: InitOptions): Promise<void> {
   });
   ui.success("Secrets saved to .claudopilot.env");
 
-  // Ensure .claudopilot.env is gitignored
+  // Ensure .claudopilot.env and .mcp.json are gitignored
   await ensureGitignored(".claudopilot.env");
+  await ensureGitignored(".mcp.json");
 
   await installClaudeMd(config);
   await installClaudeCommands(config);

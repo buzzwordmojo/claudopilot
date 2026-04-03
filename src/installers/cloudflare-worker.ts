@@ -73,6 +73,10 @@ export default {
         }
         ghEventType = 'pr_comment_mention';
         mentionPrompt = ghPayload.comment?.body || '';
+      } else if (ghEvent === 'pull_request' && ghPayload.action === 'closed' && ghPayload.pull_request?.merged === true) {
+        ghEventType = 'pr_merged';
+        branch = ghPayload.pull_request?.head?.ref || '';
+        prNumber = ghPayload.pull_request?.number;
       }
 
       if (!ghEventType || !branch) {
@@ -91,6 +95,64 @@ export default {
       // Extract task ID from branch name: claudopilot/{taskId} or claudopilot/{taskId}-slug
       const branchSuffix = branch.replace('claudopilot/', '');
       const ghTaskId = branchSuffix.split('-')[0] || branchSuffix;
+
+      // ─── PR merged → mark task + subtasks as done ───
+      if (ghEventType === 'pr_merged') {
+        // Fetch task with subtasks to mark everything done
+        let taskData = null;
+        try {
+          const taskRes = await fetch(
+            'https://api.clickup.com/api/v2/task/' + ghTaskId + '?include_subtasks=true',
+            { headers: { Authorization: '${clickupApiKey}' } }
+          );
+          if (taskRes.ok) taskData = await taskRes.json();
+        } catch (e) { /* proceed without subtask data */ }
+
+        // Mark incomplete subtasks as done
+        const subtasks = taskData?.subtasks || [];
+        for (const sub of subtasks) {
+          if (sub.status?.status?.toLowerCase() !== 'done') {
+            await fetch('https://api.clickup.com/api/v2/task/' + sub.id, {
+              method: 'PUT',
+              headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'done' }),
+            });
+          }
+        }
+
+        // Update parent task to done
+        const updateRes = await fetch(
+          'https://api.clickup.com/api/v2/task/' + ghTaskId,
+          {
+            method: 'PUT',
+            headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'done' }),
+          }
+        );
+
+        if (!updateRes.ok) {
+          const errBody = await updateRes.text();
+          return new Response('ClickUp update failed: ' + errBody, { status: 502 });
+        }
+
+        // Post comment with notify_all
+        await fetch(
+          'https://api.clickup.com/api/v2/task/' + ghTaskId + '/comment',
+          {
+            method: 'POST',
+            headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              comment_text: '[CLAUDOPILOT] ✅ PR #' + prNumber + ' merged — task and subtasks moved to done.',
+              notify_all: true,
+            }),
+          }
+        );
+
+        return new Response(
+          JSON.stringify({ done: true, source: 'github', event_type: 'pr_merged', task_id: ghTaskId }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
 
       // Dispatch to GitHub Actions
       const ghDispatchRes = await fetch(

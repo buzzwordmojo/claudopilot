@@ -21,6 +21,6 @@ export default defineConfig([
     clean: true,
     sourcemap: false,
     dts: false,
-    noExternal: [/@modelcontextprotocol/, /zod/],
+    external: [/@modelcontextprotocol\/sdk/, "zod"],
   },
 ]);

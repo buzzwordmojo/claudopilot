@@ -7,3 +7,4 @@ mcp-server/node_modules/
 .env.*
 .claudopilot.env
 .claude/settings.local.json
+.mcp.json
