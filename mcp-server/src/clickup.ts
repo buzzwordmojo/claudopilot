@@ -66,14 +66,20 @@ export class ClickUpClient {
     );
   }
 
-  async createTaskComment(taskId: string, commentText: string) {
+  async createTaskComment(
+    taskId: string,
+    commentText: string,
+    commentBlocks?: Record<string, unknown>[]
+  ) {
+    const body: Record<string, unknown> = commentBlocks
+      ? { comment: commentBlocks, notify_all: false }
+      : { comment_text: commentText };
+
     return this.request<Record<string, unknown>>(
       `/task/${taskId}/comment?team_id=${this.workspaceId}`,
       {
         method: "POST",
-        body: JSON.stringify({
-          comment_text: commentText,
-        }),
+        body: JSON.stringify(body),
       }
     );
   }

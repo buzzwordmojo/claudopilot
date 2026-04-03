@@ -1,4 +1,5 @@
 import { defineTool } from "../util.js";
+import { markdownToClickUp } from "../markdown-to-clickup.js";
 import type { ClickUpClient } from "../clickup.js";
 
 export function createCommentTools(client: ClickUpClient) {
@@ -18,15 +19,22 @@ export function createCommentTools(client: ClickUpClient) {
 
   const createTaskComment = defineTool((z) => ({
     name: "clickup_create_task_comment",
-    description: "Post a comment on a ClickUp task",
+    description:
+      "Post a comment on a ClickUp task. Supports markdown formatting (bold, italic, code, links, lists, code blocks).",
     inputSchema: {
       task_id: z.string().describe("ClickUp task ID"),
-      comment_text: z.string().describe("Comment text content"),
+      comment_text: z
+        .string()
+        .describe(
+          "Comment text in markdown format. Supports **bold**, *italic*, `code`, [links](url), bullet/ordered lists, and ```code blocks```."
+        ),
     },
     handler: async (input) => {
+      const blocks = markdownToClickUp(input.comment_text);
       return (await client.createTaskComment(
         input.task_id,
-        input.comment_text
+        input.comment_text,
+        blocks
       )) as Record<string, unknown>;
     },
   }));
