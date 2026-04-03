@@ -1,5 +1,12 @@
 import { ui } from "../utils/ui.js";
+import { ClickUpAdapter } from "../adapters/clickup.js";
 import type { CloudflareConfig, GitHubConfig, AutomationsConfig } from "../types.js";
+
+export interface WebhookEnsureConfig {
+  clickupApiKey: string;
+  workspaceId: string;
+  automationsConfig?: AutomationsConfig;
+}
 
 const WORKER_SCRIPT = (
   githubRepo: string,
@@ -625,13 +632,93 @@ export default {
 };
 `;
 
+/**
+ * Ensure a ClickUp webhook exists pointing to the given worker URL.
+ * Cleans up suspended webhooks for the same host and creates a new one if missing.
+ */
+async function ensureClickUpWebhook(
+  workerUrl: string,
+  webhookConfig: WebhookEnsureConfig
+): Promise<void> {
+  const adapter = new ClickUpAdapter(webhookConfig.clickupApiKey);
+  const workerHost = new URL(workerUrl).hostname;
+
+  const spinner = ui.spinner("Ensuring ClickUp webhook...");
+  try {
+    const webhooks = await adapter.getWebhooks(webhookConfig.workspaceId);
+    const matching = webhooks.filter((w) => w.endpoint.includes(workerHost));
+
+    // Clean up suspended webhooks for this worker
+    for (const wh of matching) {
+      if (wh.health.status === "suspended") {
+        try {
+          await adapter.deleteWebhook(wh.id);
+          ui.info(`  Removed suspended webhook ${wh.id}`);
+        } catch {
+          // Non-fatal — continue
+        }
+      }
+    }
+
+    // Check if a healthy webhook still exists after cleanup
+    const healthy = matching.filter((w) => w.health.status !== "suspended");
+
+    // Also check if the secret matches the current worker URL
+    const configSecret = new URL(workerUrl).searchParams.get("secret");
+    const secretMatch = healthy.find((w) => {
+      try {
+        return new URL(w.endpoint).searchParams.get("secret") === configSecret;
+      } catch {
+        return false;
+      }
+    });
+
+    if (secretMatch) {
+      spinner.succeed("  ClickUp webhook: already registered, secret matches");
+      return;
+    }
+
+    // Remove healthy-but-wrong-secret webhooks for this host (stale deploys)
+    for (const wh of healthy) {
+      try {
+        await adapter.deleteWebhook(wh.id);
+        ui.info(`  Removed stale webhook ${wh.id} (secret mismatch)`);
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Determine which events the webhook needs
+    const webhookEvents = ["taskStatusUpdated"];
+    if (webhookConfig.automationsConfig?.enabled) {
+      const events = webhookConfig.automationsConfig.rules.map(
+        (r) => r.when.event ?? "status_changed"
+      );
+      if (events.includes("created")) webhookEvents.push("taskCreated");
+      if (events.includes("tag_added") || events.includes("tag_removed"))
+        webhookEvents.push("taskTagUpdated");
+    }
+
+    await adapter.createWebhook(
+      webhookConfig.workspaceId,
+      workerUrl,
+      webhookEvents
+    );
+    spinner.succeed("  ClickUp webhook created → Cloudflare Worker");
+  } catch (error) {
+    spinner.fail(`  ClickUp webhook registration failed: ${error}`);
+    ui.warn("You can register the webhook manually or re-run 'claudopilot init'");
+  }
+}
+
 export async function deployCloudflareWorker(
   cfConfig: CloudflareConfig,
   githubConfig: GitHubConfig,
   githubPat: string,
   clickupApiKey?: string,
   automationsConfig?: AutomationsConfig,
-  sdlcListIds?: string[]
+  sdlcListIds?: string[],
+  webhookConfig?: WebhookEnsureConfig
 ): Promise<string> {
   // Reuse existing webhook secret from config URL on redeploy to avoid breaking registered webhooks
   let webhookSecret: string | undefined;
@@ -771,6 +858,12 @@ export async function deployCloudflareWorker(
     }
 
     spinner.succeed(`  Cloudflare Worker deployed: ${workerName}`);
+
+    // Ensure ClickUp webhook points to this worker
+    if (webhookConfig) {
+      await ensureClickUpWebhook(workerUrl, webhookConfig);
+    }
+
     return workerUrl;
   } catch (error) {
     spinner.fail("  Failed to deploy Cloudflare Worker");

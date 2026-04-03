@@ -154,6 +154,10 @@ export class ClickUpAdapter implements PMAdapter {
     return data.webhooks;
   }
 
+  async deleteWebhook(webhookId: string): Promise<void> {
+    await this.request(`/webhook/${webhookId}`, { method: "DELETE" });
+  }
+
   async createList(
     spaceId: string,
     name: string

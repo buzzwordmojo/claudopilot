@@ -315,7 +315,8 @@ export async function doctor(): Promise<void> {
 
       if (matching.length === 0) {
         whSpinner.fail(
-          "  ClickUp webhook: no webhook registered for worker URL — events won't reach GitHub Actions"
+          "  ClickUp webhook: no webhook registered for worker URL — events won't reach GitHub Actions\n" +
+          "    Fix: run 'claudopilot update --include-worker' to redeploy worker and register webhook"
         );
         failed++;
       } else if (matching.length > 1) {
@@ -327,7 +328,7 @@ export async function doctor(): Promise<void> {
         const wh = matching[0];
         if (wh.health.status === "suspended") {
           whSpinner.fail(
-            `  ClickUp webhook: SUSPENDED (${wh.health.fail_count} failures) — re-register with 'claudopilot init'`
+            `  ClickUp webhook: SUSPENDED (${wh.health.fail_count} failures) — run 'claudopilot update --include-worker' to fix`
           );
           failed++;
         } else if (wh.health.status === "failing") {
@@ -368,7 +369,7 @@ export async function doctor(): Promise<void> {
   ui.blank();
 
   if (failed > 0) {
-    ui.info("Run 'claudopilot init' to fix missing components.");
+    ui.info("Run 'claudopilot update' to fix missing components, or 'claudopilot update --include-worker' to also fix webhook issues.");
     process.exit(1);
   }
 }

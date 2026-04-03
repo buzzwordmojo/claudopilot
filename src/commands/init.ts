@@ -253,23 +253,13 @@ export async function init(options: InitOptions): Promise<void> {
           githubConfig.pat,
           pmConfig.apiKey!,
           automationsConfig,
-          pmConfig.sdlcListIds ?? (pmConfig.listId ? [pmConfig.listId] : [])
+          pmConfig.sdlcListIds ?? (pmConfig.listId ? [pmConfig.listId] : []),
+          {
+            clickupApiKey: pmConfig.apiKey!,
+            workspaceId: pmConfig.workspaceId!,
+            automationsConfig,
+          }
         );
-
-        // Create ClickUp webhook pointing to the worker
-        const webhookEvents = ["taskStatusUpdated"];
-        if (automationsConfig?.enabled) {
-          const events = automationsConfig.rules.map((r) => r.when.event ?? "status_changed");
-          if (events.includes("created")) webhookEvents.push("taskCreated");
-          if (events.includes("tag_added") || events.includes("tag_removed")) webhookEvents.push("taskTagUpdated");
-        }
-        const adapter = new ClickUpAdapter(pmConfig.apiKey!);
-        await adapter.createWebhook(
-          pmConfig.workspaceId!,
-          workerUrl,
-          webhookEvents
-        );
-        ui.success("ClickUp webhook created → Cloudflare Worker → GitHub Actions");
 
         // ─── Create GitHub webhook for PR feedback ───
         if (workerUrl && feedbackConfig?.enabled) {

@@ -238,6 +238,17 @@ export async function update(options: UpdateOptions): Promise<void> {
       ui.error("GitHub PAT missing from .claudopilot.env — cannot deploy worker");
     } else {
       try {
+        // Build webhook config so worker deploy also ensures the ClickUp webhook
+        const clickupKey = secrets.CLICKUP_API_KEY ?? config.pm.apiKey;
+        const webhookConfig =
+          clickupKey && config.pm.workspaceId
+            ? {
+                clickupApiKey: clickupKey,
+                workspaceId: config.pm.workspaceId,
+                automationsConfig: config.automations,
+              }
+            : undefined;
+
         await deployCloudflareWorker(
           {
             ...config.cloudflare,
@@ -248,7 +259,8 @@ export async function update(options: UpdateOptions): Promise<void> {
           secrets.GITHUB_PAT,
           secrets.CLICKUP_API_KEY,
           config.automations,
-          config.pm.sdlcListIds ?? (config.pm.listId ? [config.pm.listId] : [])
+          config.pm.sdlcListIds ?? (config.pm.listId ? [config.pm.listId] : []),
+          webhookConfig
         );
         ui.success("Cloudflare Worker redeployed");
       } catch (error) {

@@ -31,7 +31,8 @@ github:
   commitName: buzzwordmojo
   commitEmail: bob@buzzwordmojo.com
 cloudflare:
-  workerName: claudopilot-webhook
+  workerName: claudopilot-claudopilot
+  workerUrl: https://claudopilot-claudopilot.bob-681.workers.dev?secret=ZO_Aku-g0gvhquvHl3_RvU9FyaKNEch9
 redTeam:
   maxRounds: 5
   blockingSeverity: high
