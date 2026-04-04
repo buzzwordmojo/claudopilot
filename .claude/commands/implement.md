@@ -35,6 +35,16 @@ SETUP:
 
 6. Read CLAUDE.md for project patterns and standards.
 
+PR SCOPE — CRITICAL:
+
+Only make changes directly required by the spec. Do NOT bundle unrelated
+refactors, cleanup, or "while I'm here" improvements into the same branch.
+If you notice something worth fixing (e.g., moving module-level singletons
+to lazy init, renaming variables, extracting utilities), note it in a
+ClickUp comment but do NOT include it in this PR. Mixed-concern PRs are
+harder to review, harder to revert, and risk rejecting good feature work
+over unrelated changes. One PR = one concern.
+
 IMPLEMENTATION:
 
 Work through the implementation subtasks from the spec IN ORDER.
