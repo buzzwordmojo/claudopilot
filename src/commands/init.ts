@@ -37,8 +37,9 @@ import type {
   AutomationRule,
   AutomationAction,
   VisualVerificationConfig,
+  VerifyConfig,
 } from "../types.js";
-import { DEFAULT_STATUSES, DEFAULT_IMPROVE_LENSES } from "../types.js";
+import { DEFAULT_STATUSES, DEFAULT_IMPROVE_LENSES, DEFAULT_VERIFY_LENSES } from "../types.js";
 import { suggestDomainLenses } from "../utils/analyze.js";
 import { loadSecrets, saveSecrets, maskKey } from "../utils/secrets.js";
 
@@ -117,7 +118,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 16 : 18;
+  const totalSteps = options.skipCloud ? 17 : 19;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -483,6 +484,12 @@ export async function init(options: InitOptions): Promise<void> {
     existing?.visualVerification,
   );
 
+  // ─── Post-Build Verification ───
+  step++;
+  ui.step(step, totalSteps, "Post-build verification...");
+
+  const verifyConfig = await setupVerify(existing?.verify);
+
   // ─── Install files ───
   step++;
   ui.step(step, totalSteps, "Installing project files...");
@@ -507,6 +514,7 @@ export async function init(options: InitOptions): Promise<void> {
     feedback: feedbackConfig,
     deployment: deploymentConfig,
     visualVerification: visualVerificationConfig,
+    verify: verifyConfig,
     assignees: assigneesConfig,
     autoApprove: autoApproveConfig,
     automations: automationsConfig,
@@ -1361,6 +1369,31 @@ export async function setupVisualVerification(
     alwaysCheckRoutes: routesInput.split(",").map((r) => r.trim()).filter(Boolean),
     maxScreenshots: parseInt(maxScreenshots, 10) || 10,
     includeVideo,
+  };
+}
+
+// ─── Verify Setup ───
+
+export async function setupVerify(existing?: VerifyConfig): Promise<VerifyConfig | undefined> {
+  const enable = await confirm({
+    message: "Enable post-build verification? (AI reviews PRs for build errors, type errors, spec compliance before human review)",
+    default: existing?.enabled ?? true,
+  });
+
+  if (!enable) {
+    return undefined;
+  }
+
+  const maxRetriesInput = await input({
+    message: "Maximum retry attempts if verification fails (0-5):",
+    default: String(existing?.maxRetries ?? 2),
+  });
+
+  const maxRetries = Math.max(0, Math.min(5, parseInt(maxRetriesInput, 10) || 2));
+
+  return {
+    enabled: true,
+    maxRetries,
   };
 }
 
