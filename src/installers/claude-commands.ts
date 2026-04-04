@@ -252,7 +252,28 @@ ${config.assignees?.blockedAssignee === "specific" && config.assignees?.blockedA
         - Self-contained: an implementer can work from the subtask
           description alone without re-reading the full parent spec
         - Include: context, files, approach, acceptance criteria, edge cases
+${config.mockups?.enabled ? `
+     a2. UI MOCKUPS: If this feature involves UI changes (new screens,
+        modified layouts, new components, or visual changes), generate
+        wireframe mockup HTML files:
 
+        - Read the spec to identify UI-relevant screens/states
+        - Quick stack detection (max 3 file reads):
+          1. \`package.json\` (framework + CSS approach)
+          2. First matching config: \`tailwind.config.*\`, \`postcss.config.*\`, or \`vite.config.*\`
+          3. One sample component: first match in \`src/components/**/*.{tsx,vue,svelte}\` or \`src/app/**/*.tsx\`
+        - Generate self-contained wireframe HTML files (one per screen/state):
+          - Monochrome: #f5f5f5 bg, #e0e0e0 boxes, #333 text, 1px #ccc borders
+          - System fonts: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif
+          - Sticky header: ⚠️ WIREFRAME — Layout Only, Not Final Design
+          - No external resources, no JavaScript
+          - HTML comments annotating each section
+          - Max ${config.mockups.maxFiles ?? 10} files
+        - Save to \`specs/mockups/<feature-name>/\` with an \`index.html\` nav page
+        - Add \`## Visual Mockups\` section to the spec with preview URLs:
+          \`https://htmlpreview.github.io/?https://github.com/${config.github.owner}/${config.github.repos[0]}/blob/<branch>/specs/mockups/<feature>/<file>\`
+        - If the feature does NOT involve UI changes, skip this step entirely
+` : ""}
      b. SET TASK DESCRIPTION: Read the spec file and write it to the
         ClickUp task description using clickup_update_task with:
           task_id: "$ARGUMENTS"
