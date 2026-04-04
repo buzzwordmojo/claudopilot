@@ -319,7 +319,7 @@ If you don't need `@claude` mentions or automated security review, you can skip 
 | `CLAUDE_LONG_LIVED_TOKEN` | Yes | `~/.claude/.credentials.json` |
 | `ANTHROPIC_API_KEY` | Optional | [console.anthropic.com](https://console.anthropic.com) |
 | `CLICKUP_API_KEY` | Yes | ClickUp Settings → Apps → API Token |
-| `GH_PAT` | Yes | GitHub fine-grained token (Contents, Actions, Secrets permissions) |
+| `GH_PAT` | Yes | GitHub fine-grained token (Contents, Actions, Secrets, Environments permissions) |
 | `RAILWAY_API_TOKEN` | If Railway | railway.com → Account Settings → Tokens |
 
 ## Configuration
