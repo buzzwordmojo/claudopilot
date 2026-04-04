@@ -188,6 +188,30 @@ export default {
 
       if (!ghDispatchRes.ok) {
         const body = await ghDispatchRes.text();
+        // Best-effort: notify ClickUp task about dispatch failure
+        try {
+          await fetch(
+            'https://api.clickup.com/api/v2/task/' + ghTaskId + '/comment',
+            {
+              method: 'POST',
+              headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                comment_text: '❌ [CLAUDOPILOT] GitHub Actions dispatch failed — the workflow could not be triggered. Check GitHub PAT permissions and repository settings.',
+                notify_all: true,
+              }),
+            }
+          );
+          await fetch(
+            'https://api.clickup.com/api/v2/task/' + ghTaskId,
+            {
+              method: 'PUT',
+              headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'blocked' }),
+            }
+          );
+        } catch (e) {
+          // Best-effort — don't block the error response
+        }
         return new Response('GitHub dispatch failed: ' + body, { status: 500 });
       }
 
@@ -616,6 +640,30 @@ export default {
 
     if (!response.ok) {
       const body = await response.text();
+      // Best-effort: notify ClickUp task about dispatch failure
+      try {
+        await fetch(
+          'https://api.clickup.com/api/v2/task/' + taskId + '/comment',
+          {
+            method: 'POST',
+            headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              comment_text: '❌ [CLAUDOPILOT] GitHub Actions dispatch failed — the workflow could not be triggered. Check GitHub PAT permissions and repository settings.',
+              notify_all: true,
+            }),
+          }
+        );
+        await fetch(
+          'https://api.clickup.com/api/v2/task/' + taskId,
+          {
+            method: 'PUT',
+            headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'blocked' }),
+          }
+        );
+      } catch (e) {
+        // Best-effort — don't block the error response
+      }
       return new Response('GitHub dispatch failed: ' + body, {
         status: 500,
       });

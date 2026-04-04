@@ -46,6 +46,12 @@ A PostToolUse hook (`scripts/bump-version.sh`) auto-bumps `package.json` after e
 
 Scopes are optional: `feat(init): add auto-approve setup step`
 
+## Sensitive Files — Do Not Commit Secrets
+
+- **`.mcp.json`** — This file is gitignored but tracked from an earlier commit. NEVER replace `${CLICKUP_API_KEY}` or any other `${...}` env var placeholder with an actual key value. If you see a hardcoded API key in this file, revert it to the `${VAR_NAME}` form immediately.
+- **`mcp-server/dist/`** — Build artifact, gitignored. Do not `git add` these files.
+- Never commit `.env`, `.env.*`, `.claudopilot.env`, or any file containing API keys, tokens, or secrets.
+
 ## Key Patterns
 
 - Interactive wizard using @inquirer/prompts
