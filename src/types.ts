@@ -38,6 +38,7 @@ export interface ClaudopilotConfig {
   improve?: ImproveConfig;
   competitors?: CompetitorsConfig;
   dream?: DreamConfig;
+  mockups?: MockupConfig;
   deployment?: DeploymentConfig;
   visualVerification?: VisualVerificationConfig;
   assignees?: AssigneeConfig;
@@ -151,6 +152,11 @@ export interface CompetitorsConfig {
 export interface DreamConfig {
   enabled: boolean;
   schedule?: string;           // cron expression for periodic runs
+}
+
+export interface MockupConfig {
+  enabled: boolean;
+  maxFiles?: number;           // cap per feature to prevent runaway, default 10
 }
 
 export interface FeedbackConfig {

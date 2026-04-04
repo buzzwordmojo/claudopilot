@@ -28,6 +28,7 @@ import type {
   RedTeamConfig,
   ImproveConfig,
   FeedbackConfig,
+  MockupConfig,
   AssigneeConfig,
   AutoApproveConfig,
   RepoConfig,
@@ -117,7 +118,7 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const totalSteps = options.skipCloud ? 16 : 18;
+  const totalSteps = options.skipCloud ? 17 : 19;
   let step = 0;
 
   // ─── Step 1: Detect project ───
@@ -472,6 +473,12 @@ export async function init(options: InitOptions): Promise<void> {
 
   const dreamConfig = await setupDream(existing?.dream);
 
+  // ─── UI Mockups ───
+  step++;
+  ui.step(step, totalSteps, "UI mockup generation...");
+
+  const mockupsConfig = await setupMockups(existing?.mockups);
+
   // ─── Deployment / Preview URLs ───
   step++;
   ui.step(step, totalSteps, "Preview deployments...");
@@ -504,6 +511,7 @@ export async function init(options: InitOptions): Promise<void> {
     improve: improveConfig,
     competitors: competitorsConfig,
     dream: dreamConfig,
+    mockups: mockupsConfig,
     feedback: feedbackConfig,
     deployment: deploymentConfig,
     visualVerification: visualVerificationConfig,
@@ -1545,6 +1553,21 @@ export async function setupDream(existing?: DreamConfig): Promise<DreamConfig | 
   }
 
   return { enabled: true, schedule };
+}
+
+// ─── Mockup Setup ───
+
+export async function setupMockups(existing?: MockupConfig): Promise<MockupConfig | undefined> {
+  const enable = await confirm({
+    message: "Enable UI mockup generation during planning? (AI generates wireframe HTML previews for UI features)",
+    default: existing?.enabled ?? false,
+  });
+
+  if (!enable) {
+    return undefined;
+  }
+
+  return { enabled: true };
 }
 
 // ─── Feedback Setup ───
