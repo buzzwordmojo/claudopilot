@@ -261,10 +261,10 @@ export async function init(options: InitOptions): Promise<void> {
           }
         );
 
-        // ─── Create GitHub webhook for PR feedback ───
-        if (workerUrl && feedbackConfig?.enabled) {
+        // ─── Create GitHub webhook for PR events (merge→done, feedback, etc.) ───
+        if (workerUrl) {
           step++;
-          ui.step(step, totalSteps, "Creating GitHub webhook for PR feedback...");
+          ui.step(step, totalSteps, "Creating GitHub webhook...");
 
           const repoSlug = `${githubConfig.owner}/${githubConfig.repos[0]}`;
           const webhookSecret = cloudflareConfig.apiToken; // reuse as shared secret
