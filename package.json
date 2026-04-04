@@ -7,7 +7,8 @@
     "claudopilot": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "npm run build:mcp && tsup",
+    "build:mcp": "cd mcp-server && npm run build",
     "dev": "tsup --watch",
     "start": "node dist/cli.js",
     "lint": "eslint src/",

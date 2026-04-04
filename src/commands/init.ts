@@ -1859,20 +1859,21 @@ export async function setupAutomations(clickupApiKey: string, spaceId: string, w
     "reach 'planning' or 'approved' status. Leave empty to process all tasks.",
   ]);
 
+  const existingTag = existing?.dispatchGateTag || undefined; // treat "" as no tag
   const useGateTag = await confirm({
     message: "Require a tag for planning/implementation dispatch?",
-    default: !!existing?.dispatchGateTag,
+    default: !!existingTag,
   });
 
   let dispatchGateTag: string | undefined;
   if (useGateTag) {
     dispatchGateTag = await input({
       message: "Tag name (tasks must have this tag to trigger planning/implementation):",
-      default: existing?.dispatchGateTag ?? "claudopilot",
+      default: existingTag ?? "claudopilot",
     });
   }
 
-  return { enabled: true, boards, rules, dispatchGateTag };
+  return { enabled: true, boards, rules, ...(dispatchGateTag ? { dispatchGateTag } : {}) };
 }
 
 // ─── Status Customization ───

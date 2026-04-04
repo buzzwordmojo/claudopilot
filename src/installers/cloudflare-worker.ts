@@ -757,7 +757,7 @@ export async function deployCloudflareWorker(
       sdlcListIds ?? [],
       automationBoards,
       automationRules,
-      automationsConfig?.dispatchGateTag
+      automationsConfig?.dispatchGateTag || undefined
     );
 
     const formData = new FormData();

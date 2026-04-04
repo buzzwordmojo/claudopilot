@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "tsup src/index.ts --format esm --target node20 --outDir dist --clean",
+    "build": "tsup",
     "start": "node dist/index.js"
   },
   "dependencies": {
