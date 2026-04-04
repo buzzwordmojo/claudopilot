@@ -1125,17 +1125,20 @@ ${generateMcpConfigStep(config)}
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment_text":"🔑 [CLAUDOPILOT] Fix feedback failed — Claude authentication expired."}'
+              -d '{"comment_text":"🔑 [CLAUDOPILOT] Fix feedback failed — Claude authentication expired. Run \`claudopilot auth\` to refresh credentials, then check the GitHub Actions run for details."}'
+            ${generateMoveToBlocked(config)}
           elif [ "\$FAILURE_REASON" = "token_exhausted" ]; then
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Fix feedback paused — Claude token/rate limit reached."}'
+              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Fix feedback paused — Claude token/rate limit reached. Check the GitHub Actions run for details."}'
+            ${generateMoveToBlocked(config)}
           else
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment_text":"❌ [CLAUDOPILOT] Fix feedback failed — check GitHub Actions logs."}'
+              -d '{"comment_text":"❌ [CLAUDOPILOT] Fix feedback failed — check the GitHub Actions run for details."}'
+            ${generateMoveToBlocked(config)}
           fi
 `;
 }
