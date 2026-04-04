@@ -16,6 +16,12 @@ export interface VisualVerificationConfig {
   includeVideo?: boolean;           // record video of navigation
 }
 
+export interface VerifyConfig {
+  enabled: boolean;
+  maxRetries?: number;        // default 2 (so up to 3 total attempts: initial + 2 retries)
+  lenses?: string[];          // override default lenses
+}
+
 export interface AssigneeConfig {
   blockedAssignee: "task_creator" | "specific";
   blockedAssigneeUserId?: string;
@@ -40,6 +46,7 @@ export interface ClaudopilotConfig {
   dream?: DreamConfig;
   deployment?: DeploymentConfig;
   visualVerification?: VisualVerificationConfig;
+  verify?: VerifyConfig;
   assignees?: AssigneeConfig;
   autoApprove?: AutoApproveConfig;
   automations?: AutomationsConfig;
@@ -189,6 +196,18 @@ export type AutomationAction =
   | { tag_linked: { board: string; tag: string } }
   | { dispatch: { prompt: string } }
   | { mention: { userId: string; text: string } };
+
+export const DEFAULT_VERIFY_LENSES = [
+  "build",
+  "typecheck",
+  "lint",
+  "test",
+  "merge-conflicts",
+  "spec-compliance",
+  "scope",
+  "patterns",
+  "security",
+];
 
 export const DEFAULT_IMPROVE_LENSES = [
   "code quality",
