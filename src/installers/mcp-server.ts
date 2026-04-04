@@ -1,8 +1,9 @@
-import { mkdir, copyFile, writeFile } from "node:fs/promises";
+import { mkdir, copyFile, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ClaudopilotConfig } from "../types.js";
+import { loadSecrets } from "../utils/secrets.js";
 import { ui } from "../utils/ui.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,26 @@ export async function installMcpServer(
     JSON.stringify(mcpConfig, null, 2) + "\n",
     "utf-8"
   );
+
+  // Write secrets from .claudopilot.env into .claude/settings.local.json
+  // so Claude Code has them in env for ${VAR} substitution in .mcp.json.
+  // settings.local.json is gitignored and never committed.
+  const secrets = await loadSecrets(targetDir);
+  if (secrets.CLICKUP_API_KEY) {
+    const localSettingsPath = join(targetDir, ".claude", "settings.local.json");
+    let localSettings: Record<string, unknown> = {};
+    if (existsSync(localSettingsPath)) {
+      try {
+        localSettings = JSON.parse(await readFile(localSettingsPath, "utf-8"));
+      } catch {
+        // Malformed — will be overwritten
+      }
+    }
+    const env = (localSettings.env as Record<string, string>) ?? {};
+    env.CLICKUP_API_KEY = secrets.CLICKUP_API_KEY;
+    localSettings.env = env;
+    await writeFile(localSettingsPath, JSON.stringify(localSettings, null, 2) + "\n", "utf-8");
+  }
 
   ui.success("MCP server installed in .claude/mcp-server/");
   ui.success(".mcp.json generated at project root");
