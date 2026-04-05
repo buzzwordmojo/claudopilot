@@ -35,6 +35,16 @@ SETUP:
 
 6. Read CLAUDE.md for project patterns and standards.
 
+7. CHECK FOR VERIFY FINDINGS (resumption from failed verification):
+   Check if .verify-findings.md exists at the repo root.
+   If it exists:
+   - Read the findings — these are issues the verify agent found
+   - Address each BLOCKING finding BEFORE continuing with remaining subtasks
+   - After addressing all findings, delete .verify-findings.md
+   - Commit the deletion: git add -A && git commit -m "fix: address verify findings"
+   - Post a comment using clickup_create_task_comment with task_id "$ARGUMENTS"
+     confirming the findings have been addressed.
+
 PR SCOPE — CRITICAL:
 
 Only make changes directly required by the spec. Do NOT bundle unrelated

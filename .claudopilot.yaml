@@ -57,6 +57,8 @@ competitors:
     multiple projects
 dream:
   enabled: true
+verify:
+  enabled: true
 feedback:
   enabled: true
 assignees:
