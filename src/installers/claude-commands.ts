@@ -622,10 +622,11 @@ If ANY BLOCKING findings:
           git add .verify-findings.md && git commit -m "fix: add verify findings for retry"
        b. Push the branch:
           git push origin claudopilot/$ARGUMENTS
-       c. Move task to "approved" using clickup_update_task with:
+       c. Move task to "blocked" using clickup_update_task with:
             task_id: "$ARGUMENTS"
-            status: "approved"
-       d. STOP. (This triggers reimplementation via the Cloudflare Worker.)
+            status: "blocked"
+       d. Post a comment: "🔍 [REVIEW] Verification failed — findings saved to .verify-findings.md. Move task to Verifying to retry."
+       e. STOP.
 
 If NO blocking findings:
   1. Post a ClickUp comment using the PASS output format below.
