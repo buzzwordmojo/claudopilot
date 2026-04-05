@@ -91,38 +91,41 @@ Classify each finding as BLOCKING or WARNING:
 - WARNING: minor pattern deviations, scope notes, flaky test suspicion
 
 If ANY BLOCKING findings:
-  1. Write structured findings to .verify-findings.md at the repo root.
-     Format:
-     ```markdown
-     # Verify Findings
-     ## Blocking Issues
-     1. **<Lens>** — <description of issue and how to fix it>
-     ## Warnings
-     - <warning description>
-     ```
+  1. Post a ClickUp comment using the FAIL output format below.
 
-  2. Post a ClickUp comment using the FAIL output format below.
+  2. Attempt to fix the blocking issues yourself:
+     - For each blocking finding, make the necessary code changes.
+     - Commit fixes: git add -A && git commit -m "fix: address verify findings"
+     - Push the branch: git push origin claudopilot/$ARGUMENTS
 
-  3. Check attempt count:
-     - If attempt >= 2 (max retries reached):
-       a. Move task to "blocked" using clickup_update_task with:
-            task_id: "$ARGUMENTS"
-            status: "blocked"
-       b. Assign creator using clickup_update_task with:
-            task_id: "$ARGUMENTS"
-            assignees: { "add": [<creator_id from task details>] }
-       c. Post a comment: "🔍 [REVIEW] Max retries (2) reached. Moving to blocked for human review."
-       d. STOP.
-     - Else:
-       a. Commit .verify-findings.md:
-          git add .verify-findings.md && git commit -m "fix: add verify findings for retry"
-       b. Push the branch:
-          git push origin claudopilot/$ARGUMENTS
-       c. Move task to "blocked" using clickup_update_task with:
-            task_id: "$ARGUMENTS"
-            status: "blocked"
-       d. Post a comment: "🔍 [REVIEW] Verification failed — findings saved to .verify-findings.md. Move task to Verifying to retry."
-       e. STOP.
+  3. Re-run ALL checks from the CHECKS section above on the fixed code.
+
+  4. If all blocking issues are now resolved (no remaining FAIL results):
+     - Post a REVISED ClickUp comment using the PASS output format below,
+       prefixed with "🔍 [REVIEW] Attempt N — REVISED PASS (after fixes)"
+     - Include a "## Fixes Applied" section listing what was fixed.
+     - Move task to "in review" using clickup_update_task with:
+         task_id: "$ARGUMENTS"
+         status: "in review"
+     - STOP.
+
+  5. If blocking issues remain after fix attempt:
+     a. Write remaining findings to .verify-findings.md at the repo root.
+        Format:
+        ```markdown
+        # Verify Findings
+        ## Blocking Issues
+        1. **<Lens>** — <description of issue and how to fix it>
+        ## Warnings
+        - <warning description>
+        ```
+     b. Commit: git add .verify-findings.md && git commit -m "fix: add verify findings"
+     c. Push: git push origin claudopilot/$ARGUMENTS
+     d. Move task to "blocked" using clickup_update_task with:
+          task_id: "$ARGUMENTS"
+          status: "blocked"
+     e. Post a comment: "🔍 [REVIEW] Verification failed — could not resolve all issues. Findings saved to .verify-findings.md. Move task to Verifying to retry."
+     f. STOP.
 
 If NO blocking findings:
   1. Post a ClickUp comment using the PASS output format below.
