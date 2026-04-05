@@ -13,6 +13,7 @@ import { installGitHubActions } from "../installers/github-actions.js";
 import { installCodeRabbitConfig } from "../installers/coderabbit.js";
 import { deployCloudflareWorker } from "../installers/cloudflare-worker.js";
 import { installMcpServer } from "../installers/mcp-server.js";
+import { ClickUpAdapter } from "../adapters/clickup.js";
 
 const PKG_NAME = "@buzzwordmojo/claudopilot";
 
@@ -21,6 +22,7 @@ const { version: currentVersion } = require("../../package.json");
 
 interface UpdateOptions {
   includeWorker?: boolean;
+  includeStatuses?: boolean;
   skipSelfUpdate?: boolean;
 }
 
@@ -184,6 +186,7 @@ export async function update(options: UpdateOptions): Promise<void> {
       const repoRoot = getRepoRoot();
       const passthrough: string[] = [];
       if (options.includeWorker) passthrough.push("--include-worker");
+      if (options.includeStatuses) passthrough.push("--include-statuses");
       reExeced = await selfUpdateFromGit(repoRoot, passthrough);
     } else {
       reExeced = await selfUpdateFromNpm();
@@ -208,7 +211,9 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 
   const secrets = await loadSecrets();
-  const totalSteps = options.includeWorker ? 6 : 5;
+  let totalSteps = 5;
+  if (options.includeWorker) totalSteps++;
+  if (options.includeStatuses) totalSteps++;
 
   // Re-generate local files
   ui.step(1, totalSteps, "Regenerating Claude commands...");
@@ -226,9 +231,12 @@ export async function update(options: UpdateOptions): Promise<void> {
   ui.step(5, totalSteps, "Updating MCP server...");
   await installMcpServer(config);
 
+  let stepNum = 6;
+
   // Optionally redeploy Cloudflare Worker
   if (options.includeWorker) {
-    ui.step(6, 6, "Redeploying Cloudflare Worker...");
+    ui.step(stepNum, totalSteps, "Redeploying Cloudflare Worker...");
+    stepNum++;
 
     if (!config.cloudflare) {
       ui.warn("No Cloudflare config found in .claudopilot.yaml — skipping worker deploy");
@@ -265,6 +273,30 @@ export async function update(options: UpdateOptions): Promise<void> {
         ui.success("Cloudflare Worker redeployed");
       } catch (error) {
         ui.error(`Cloudflare Worker deploy failed: ${error}`);
+      }
+    }
+  }
+
+  // Optionally sync ClickUp statuses
+  if (options.includeStatuses) {
+    ui.step(stepNum, totalSteps, "Syncing ClickUp statuses...");
+
+    const clickupKey = secrets.CLICKUP_API_KEY ?? config.pm.apiKey;
+    const listId = config.pm.listId;
+
+    if (!clickupKey) {
+      ui.error("ClickUp API key missing — cannot sync statuses");
+    } else if (!listId) {
+      ui.error("No list ID in config — cannot sync statuses");
+    } else if (!config.pm.statuses) {
+      ui.warn("No statuses defined in config — skipping");
+    } else {
+      try {
+        const adapter = new ClickUpAdapter(clickupKey);
+        await adapter.configureStatuses(listId, config.pm.statuses);
+        ui.success("ClickUp statuses synced");
+      } catch (error) {
+        ui.error(`Failed to sync statuses: ${error}`);
       }
     }
   }

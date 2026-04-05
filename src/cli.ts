@@ -132,6 +132,7 @@ program
   .command("update")
   .description("Re-install generated files from existing config")
   .option("--include-worker", "Also redeploy the Cloudflare Worker")
+  .option("--include-statuses", "Sync ClickUp board statuses from config")
   .option("--skip-self-update", "Skip pulling latest claudopilot (used internally)")
   .action(update);
 

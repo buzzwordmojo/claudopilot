@@ -21,6 +21,7 @@ pm:
     awaitingApproval: awaiting approval
     approved: approved
     building: building
+    verifying: verifying
     inReview: in review
     done: done
 github:
