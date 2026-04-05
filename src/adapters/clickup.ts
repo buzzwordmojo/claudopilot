@@ -257,6 +257,7 @@ const STATUS_COLORS = [
   "#8B5CF6", // awaiting approval - purple
   "#10B981", // approved - green
   "#06B6D4", // building - cyan
+  "#EC4899", // verifying - pink
   "#F97316", // in review - orange
   "#22C55E", // done - green
 ];

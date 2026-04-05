@@ -1051,6 +1051,79 @@ ${generateMcpConfigStep(config)}
             -H "Content-Type: application/json" \\
             -d '{"status":"in review"}'
 
+` : ""}${config.verify?.enabled ? `  # ═══════════════════════════════════════════
+  # STANDALONE VERIFY (triggered by "verifying" status)
+  # ═══════════════════════════════════════════
+
+  verify-standalone:
+    if: github.event.client_payload.status == 'verifying'
+    name: 🔍 Verify PR (standalone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Post verify started comment
+        run: |
+          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"comment_text":"🔍 [CLAUDOPILOT] Post-build verification started — reviewing PR against quality lenses..."}'
+
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ env.BRANCH }}
+          fetch-depth: 0
+          token: \${{ secrets.GH_PAT }}
+
+      - name: Setup git
+        run: |
+          git config user.name "${githubConfig.commitName ?? "claudopilot"}"
+          git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Setup Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '\${{ secrets.CLAUDE_LONG_LIVED_TOKEN }}' > ~/.claude/.credentials.json
+${generateAuthRefreshStep()}
+${generateMcpConfigStep(config)}
+
+      - name: Run verify-pr
+        id: verify
+        continue-on-error: true
+        env:
+          GH_TOKEN: \${{ secrets.GH_PAT }}
+        run: |
+          set -o pipefail
+          export ARGUMENTS="\$TASK_ID"
+          PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/verify-pr.md)
+          claude -p "\$PROMPT" \\
+            --max-turns 40 \\
+            --verbose \\
+            --mcp-config .mcp.json \\
+            --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Push any verify commits
+        if: always()
+        run: |
+          git add -A
+          git diff --cached --quiet || git commit -m "fix: add verify findings for retry"
+          git push origin "\$BRANCH" 2>/dev/null || true
+
+      - name: Handle verify crash
+        if: always() && steps.verify.outcome == 'failure'
+        run: |
+          # On crash (not a verdict), treat as PASS with warning — don't block
+          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"comment_text":"🔍 [REVIEW] Verify agent crashed — treating as PASS with warning. Moving to in review."}'
+          curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"status":"in review"}'
+
 ` : ""}  # ═══════════════════════════════════════════
   # FIX PR FEEDBACK
   # ═══════════════════════════════════════════

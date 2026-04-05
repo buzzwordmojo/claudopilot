@@ -93,6 +93,7 @@ export interface StatusConfig {
   awaitingApproval: string;
   approved: string;
   building: string;
+  verifying: string;
   inReview: string;
   done: string;
 }
@@ -104,6 +105,7 @@ export const DEFAULT_STATUSES: StatusConfig = {
   awaitingApproval: "awaiting approval",
   approved: "approved",
   building: "building",
+  verifying: "verifying",
   inReview: "in review",
   done: "done",
 };

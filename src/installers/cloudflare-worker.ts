@@ -600,7 +600,7 @@ export default {
       );
     }
 
-    const triggers = ['planning', 'approved'];
+    const triggers = ['planning', 'approved', 'verifying'];
     const SDLC_LIST_IDS = ${JSON.stringify(sdlcListIds)};
 
     // Only dispatch planning/approved for tasks on the main claudopilot list
