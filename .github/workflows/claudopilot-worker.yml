@@ -693,15 +693,15 @@ jobs:
       - name: Handle verify crash
         if: always() && steps.verify.outcome == 'failure'
         run: |
-          # On crash (not a verdict), treat as PASS with warning — don't block
+          # On crash (not a verdict), move to blocked for human triage
           curl -s -X POST "https://api.clickup.com/api/v2/task/$TASK_ID/comment" \
             -H "Authorization: $CLICKUP_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"comment_text":"🔍 [REVIEW] Verify agent crashed — treating as PASS with warning. Moving to in review."}'
+            -d '{"comment_text":"🔍 [REVIEW] Verify agent crashed. Moving to blocked. Move task to Verifying to retry."}'
           curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
             -H "Authorization: $CLICKUP_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"status":"in review"}'
+            -d '{"status":"blocked"}'
 
   # ═══════════════════════════════════════════
   # STANDALONE VERIFY (triggered by "verifying" status)
@@ -841,15 +841,15 @@ jobs:
       - name: Handle verify crash
         if: always() && steps.verify.outcome == 'failure'
         run: |
-          # On crash (not a verdict), treat as PASS with warning — don't block
+          # On crash (not a verdict), move to blocked for human triage
           curl -s -X POST "https://api.clickup.com/api/v2/task/$TASK_ID/comment" \
             -H "Authorization: $CLICKUP_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"comment_text":"🔍 [REVIEW] Verify agent crashed — treating as PASS with warning. Moving to in review."}'
+            -d '{"comment_text":"🔍 [REVIEW] Verify agent crashed. Moving to blocked. Move task to Verifying to retry."}'
           curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
             -H "Authorization: $CLICKUP_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"status":"in review"}'
+            -d '{"status":"blocked"}'
 
   # ═══════════════════════════════════════════
   # FIX PR FEEDBACK
