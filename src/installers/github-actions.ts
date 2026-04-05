@@ -988,6 +988,13 @@ ${config.verify?.enabled ? `  # ════════════════
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Post verify started comment
+        run: |
+          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d '{"comment_text":"🔍 [CLAUDOPILOT] Post-build verification started — reviewing PR against quality lenses..."}'
+
       - uses: actions/checkout@v4
         with:
           ref: \${{ env.BRANCH }}
