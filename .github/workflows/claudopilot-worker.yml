@@ -190,8 +190,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"🔑 [CLAUDOPILOT] Planning failed — Claude authentication expired. Run `claudopilot auth` to refresh credentials, then move task back to Planning."}'
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           elif [ "$FAILURE" = "max_turns" ]; then
@@ -200,8 +200,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           elif [ "$FAILURE" = "token_exhausted" ]; then
@@ -214,8 +214,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           else
@@ -223,8 +223,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"❌ [CLAUDOPILOT] Planning failed — check GitHub Actions logs for details."}'
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           fi
@@ -539,8 +539,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"🔑 [CLAUDOPILOT] Implementation failed — Claude authentication expired. Run `claudopilot auth` to refresh credentials, then move task back to Approved."}'
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           elif [ "$FAILURE_REASON" = "max_turns" ]; then
@@ -549,8 +549,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           elif [ "$FAILURE_REASON" = "token_exhausted" ]; then
@@ -561,8 +561,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           else
@@ -570,8 +570,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"❌ [CLAUDOPILOT] Implementation failed — check GitHub Actions logs for details."}'
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           fi
@@ -807,8 +807,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"🔑 [CLAUDOPILOT] Fix feedback failed — Claude authentication expired. Run `claudopilot auth` to refresh credentials, then check the GitHub Actions run for details."}'
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           elif [ "$FAILURE_REASON" = "max_turns" ]; then
@@ -817,8 +817,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           elif [ "$FAILURE_REASON" = "token_exhausted" ]; then
@@ -826,8 +826,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"⏸️ [CLAUDOPILOT] Fix feedback paused — Claude token/rate limit reached. Check the GitHub Actions run for details."}'
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           else
@@ -835,8 +835,8 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"❌ [CLAUDOPILOT] Fix feedback failed — check the GitHub Actions run for details."}'
-            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
-              -H "Authorization: \$CLICKUP_API_KEY" \
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/$TASK_ID" \
+              -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
           fi
