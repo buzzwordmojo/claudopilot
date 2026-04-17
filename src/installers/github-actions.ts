@@ -134,12 +134,13 @@ function generateVercelDetectionStep(attempts: number, interval: number): string
           GH_TOKEN: \${{ secrets.GH_PAT }}
         run: |
           echo "Waiting for Vercel deployment on \$BRANCH..."
+          HEAD_SHA=$(git rev-parse HEAD)
           PREVIEW_URL=""
           for i in $(seq 1 ${attempts}); do
             DEPLOY=$(curl -s \\
               -H "Authorization: Bearer \$GH_TOKEN" \\
               -H "Accept: application/vnd.github+json" \\
-              "https://api.github.com/repos/\${{ github.repository }}/deployments?ref=\$BRANCH&per_page=1")
+              "https://api.github.com/repos/\${{ github.repository }}/deployments?sha=\$HEAD_SHA&per_page=1")
             DEPLOY_ID=$(echo "\$DEPLOY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'] if d else '')" 2>/dev/null || echo "")
             if [ -n "\$DEPLOY_ID" ]; then
               STATUS=$(curl -s \\
@@ -208,12 +209,13 @@ function generateRailwayDetectionStep(config: DeploymentConfig, attempts: number
           GH_TOKEN: \${{ secrets.GH_PAT }}${envBlock}
         run: |
           echo "Waiting for Railway deployment on \$BRANCH..."
+          HEAD_SHA=$(git rev-parse HEAD)
           PREVIEW_URL=""
           for i in $(seq 1 ${attempts}); do
             DEPLOY=$(curl -s \\
               -H "Authorization: Bearer \$GH_TOKEN" \\
               -H "Accept: application/vnd.github+json" \\
-              "https://api.github.com/repos/\${{ github.repository }}/deployments?ref=\$BRANCH&per_page=1")
+              "https://api.github.com/repos/\${{ github.repository }}/deployments?sha=\$HEAD_SHA&per_page=1")
             DEPLOY_ID=$(echo "\$DEPLOY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'] if d else '')" 2>/dev/null || echo "")
             if [ -n "\$DEPLOY_ID" ]; then
               STATUS=$(curl -s \\
@@ -669,6 +671,8 @@ ${generateMcpConfigStep(config)}
             echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
             RESET_INFO=$(grep -oiE "resets [0-9]+[ap]m \\([A-Z]+\\)" /tmp/claude-output.log 2>/dev/null | head -1 || echo "")
             echo "reset_info=\$RESET_INFO" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns|max.turn.*reached" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns_reached" >> "\$GITHUB_OUTPUT"
           else
             echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
           fi
@@ -712,6 +716,12 @@ ${generateMcpConfigStep(config)}
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d "{\\"comment_text\\":\\"⏸️ [CLAUDOPILOT] \$MSG\\"}"
+            ${generateMoveToBlocked(config)}
+          elif [ "\$FAILURE" = "max_turns_reached" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Planning paused — reached turn limit. Move task back to Planning to retry."}'
             ${generateMoveToBlocked(config)}
           else
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
@@ -823,6 +833,8 @@ ${generateMcpConfigStep(config)}
             echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
             RESET_INFO=$(grep -oiE "resets [0-9]+[ap]m \\([A-Z]+\\)" /tmp/claude-output.log 2>/dev/null | head -1 || echo "")
             echo "reset_info=\$RESET_INFO" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns|max.turn.*reached" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns_reached" >> "\$GITHUB_OUTPUT"
           else
             echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
           fi
@@ -969,11 +981,17 @@ ${config.verify?.enabled ? `            # Verify phase enabled — do NOT move t
               -H "Content-Type: application/json" \\
               -d "{\\"comment_text\\":\\"⏸️ [CLAUDOPILOT] \$MSG\\"}"
             ${generateMoveToBlocked(config)}
+          elif [ "\$FAILURE_REASON" = "max_turns_reached" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Implementation paused — reached turn limit. Progress saved to branch. Move task back to Approved to retry."}'
+            ${generateMoveToBlocked(config)}
           else
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Implementation paused — reached turn limit. Progress saved to branch. Move task back to Approved to continue."}'
+              -d '{"comment_text":"❌ [CLAUDOPILOT] Implementation failed — check GitHub Actions logs for details."}'
             ${generateMoveToBlocked(config)}
           fi
 
@@ -1038,14 +1056,34 @@ ${generateMcpConfigStep(config)}
           git diff --cached --quiet || git commit -m "fix: add verify findings for retry"
           git push origin "\$BRANCH" 2>/dev/null || true
 
-      - name: Handle verify crash
+      - name: Detect verify failure reason
+        id: detect
         if: always() && steps.verify.outcome == 'failure'
         run: |
-          # On crash (not a verdict), move to blocked for human triage
+          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=auth_expired" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns|max.turn.*reached" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns_reached" >> "\$GITHUB_OUTPUT"
+          else
+            echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
+          fi
+
+      - name: Handle verify crash
+        if: always() && steps.verify.outcome == 'failure'
+        env:
+          FAILURE_REASON: \${{ steps.detect.outputs.failure_reason }}
+        run: |
+          if [ "\$FAILURE_REASON" = "max_turns_reached" ]; then
+            MSG="🔍 [REVIEW] Verify paused — reached turn limit. Move task to Verifying to retry."
+          else
+            MSG="🔍 [REVIEW] Verify agent crashed. Moving to blocked. Move task to Verifying to retry."
+          fi
           curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
             -H "Authorization: \$CLICKUP_API_KEY" \\
             -H "Content-Type: application/json" \\
-            -d '{"comment_text":"🔍 [REVIEW] Verify agent crashed. Moving to blocked. Move task to Verifying to retry."}'
+            -d "{\\"comment_text\\":\\"\$MSG\\"}"
           curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
             -H "Authorization: \$CLICKUP_API_KEY" \\
             -H "Content-Type: application/json" \\
@@ -1111,14 +1149,34 @@ ${generateMcpConfigStep(config)}
           git diff --cached --quiet || git commit -m "fix: add verify findings for retry"
           git push origin "\$BRANCH" 2>/dev/null || true
 
-      - name: Handle verify crash
+      - name: Detect verify failure reason
+        id: detect
         if: always() && steps.verify.outcome == 'failure'
         run: |
-          # On crash (not a verdict), move to blocked for human triage
+          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=auth_expired" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns|max.turn.*reached" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns_reached" >> "\$GITHUB_OUTPUT"
+          else
+            echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
+          fi
+
+      - name: Handle verify crash
+        if: always() && steps.verify.outcome == 'failure'
+        env:
+          FAILURE_REASON: \${{ steps.detect.outputs.failure_reason }}
+        run: |
+          if [ "\$FAILURE_REASON" = "max_turns_reached" ]; then
+            MSG="🔍 [REVIEW] Verify paused — reached turn limit. Move task to Verifying to retry."
+          else
+            MSG="🔍 [REVIEW] Verify agent crashed. Moving to blocked. Move task to Verifying to retry."
+          fi
           curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
             -H "Authorization: \$CLICKUP_API_KEY" \\
             -H "Content-Type: application/json" \\
-            -d '{"comment_text":"🔍 [REVIEW] Verify agent crashed. Moving to blocked. Move task to Verifying to retry."}'
+            -d "{\\"comment_text\\":\\"\$MSG\\"}"
           curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
             -H "Authorization: \$CLICKUP_API_KEY" \\
             -H "Content-Type: application/json" \\
@@ -1244,6 +1302,8 @@ ${generateMcpConfigStep(config)}
             echo "failure_reason=auth_expired" >> "\$GITHUB_OUTPUT"
           elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=token_exhausted" >> "\$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns|max.turn.*reached" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns_reached" >> "\$GITHUB_OUTPUT"
           else
             echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
           fi
@@ -1284,6 +1344,12 @@ ${generateMcpConfigStep(config)}
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"comment_text":"⏸️ [CLAUDOPILOT] Fix feedback paused — Claude token/rate limit reached. Check the GitHub Actions run for details."}'
+            ${generateMoveToBlocked(config)}
+          elif [ "\$FAILURE_REASON" = "max_turns_reached" ]; then
+            curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
+              -H "Content-Type: application/json" \\
+              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Fix feedback paused — reached turn limit. Move task back to Fixing to retry."}'
             ${generateMoveToBlocked(config)}
           else
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
