@@ -12,6 +12,10 @@ env:
   CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
   TASK_ID: ${{ github.event.client_payload.task_id }}
   BRANCH: claudopilot/${{ github.event.client_payload.task_id }}
+  # Set CLAUDOPILOT_PERSIST_SESSIONS=true as a repo variable to enable
+  # cross-dispatch Claude session resume (so max-turns failures can pick up
+  # the same architect/red-team conversation on the next run).
+  CLAUDOPILOT_PERSIST_SESSIONS: ${{ vars.CLAUDOPILOT_PERSIST_SESSIONS || 'false' }}
 
 # ═══════════════════════════════════════════
 # PLANNING
@@ -132,6 +136,38 @@ jobs:
         run: |
           sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
 
+      - name: Derive plan session ID
+        id: session_plan
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        run: |
+          SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'claudopilot:' + '$TASK_ID' + ':plan'))")
+          echo "id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Restore prior plan session
+        id: restore_plan
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-session-${{ env.TASK_ID }}-plan
+          path: ~/.claude/projects/restored/
+
+      - name: Move restored plan session into place
+        id: place_plan
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.restore_plan.outcome == 'success'
+        run: |
+          SESSION_ID="${{ steps.session_plan.outputs.id }}"
+          JSONL=$(find ~/.claude/projects/restored -name "${SESSION_ID}.jsonl" -type f 2>/dev/null | head -1)
+          if [ -n "$JSONL" ]; then
+            PROJECT_HASH=$(pwd | sed 's|/|-|g')
+            mkdir -p "$HOME/.claude/projects/$PROJECT_HASH"
+            cp "$JSONL" "$HOME/.claude/projects/$PROJECT_HASH/"
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+            echo "Restored prior session $SESSION_ID into $HOME/.claude/projects/$PROJECT_HASH/"
+          else
+            echo "Artifact present but no matching .jsonl for $SESSION_ID — starting fresh"
+          fi
+
       - name: Run planning loop
         id: claude
         continue-on-error: true
@@ -140,11 +176,29 @@ jobs:
           export ARGUMENTS="$TASK_ID"
           # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
           PROMPT=$(sed "s/\$ARGUMENTS/$TASK_ID/g" .claude/commands/plan-feature.md)
-          claude -p "$PROMPT" \
+          RESUME_FLAG=""
+          if [ "$CLAUDOPILOT_PERSIST_SESSIONS" = "true" ] && [ -n "${{ steps.session_plan.outputs.id }}" ]; then
+            if [ "${{ steps.place_plan.outputs.restored }}" = "true" ]; then
+              RESUME_FLAG="--resume ${{ steps.session_plan.outputs.id }}"
+            else
+              RESUME_FLAG="--session-id ${{ steps.session_plan.outputs.id }}"
+            fi
+          fi
+          claude -p "$PROMPT" $RESUME_FLAG \
             --max-turns 60 \
             --verbose \
             --mcp-config .mcp.json \
             --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Upload plan Claude session
+        if: always() && env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.session_plan.outputs.id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-${{ env.TASK_ID }}-plan
+          path: ~/.claude/projects/**/${{ steps.session_plan.outputs.id }}.jsonl
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: ignore
 
       - name: Detect failure reason
         id: detect
@@ -379,6 +433,38 @@ jobs:
         run: |
           sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
 
+      - name: Derive impl session ID
+        id: session_impl
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        run: |
+          SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'claudopilot:' + '$TASK_ID' + ':impl'))")
+          echo "id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Restore prior impl session
+        id: restore_impl
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-session-${{ env.TASK_ID }}-impl
+          path: ~/.claude/projects/restored/
+
+      - name: Move restored impl session into place
+        id: place_impl
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.restore_impl.outcome == 'success'
+        run: |
+          SESSION_ID="${{ steps.session_impl.outputs.id }}"
+          JSONL=$(find ~/.claude/projects/restored -name "${SESSION_ID}.jsonl" -type f 2>/dev/null | head -1)
+          if [ -n "$JSONL" ]; then
+            PROJECT_HASH=$(pwd | sed 's|/|-|g')
+            mkdir -p "$HOME/.claude/projects/$PROJECT_HASH"
+            cp "$JSONL" "$HOME/.claude/projects/$PROJECT_HASH/"
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+            echo "Restored prior session $SESSION_ID into $HOME/.claude/projects/$PROJECT_HASH/"
+          else
+            echo "Artifact present but no matching .jsonl for $SESSION_ID — starting fresh"
+          fi
+
       - name: Write code
         id: claude
         continue-on-error: true
@@ -389,11 +475,29 @@ jobs:
           export ARGUMENTS="$TASK_ID"
           # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
           PROMPT=$(sed "s/\$ARGUMENTS/$TASK_ID/g" .claude/commands/implement.md)
-          claude -p "$PROMPT" \
+          RESUME_FLAG=""
+          if [ "$CLAUDOPILOT_PERSIST_SESSIONS" = "true" ] && [ -n "${{ steps.session_impl.outputs.id }}" ]; then
+            if [ "${{ steps.place_impl.outputs.restored }}" = "true" ]; then
+              RESUME_FLAG="--resume ${{ steps.session_impl.outputs.id }}"
+            else
+              RESUME_FLAG="--session-id ${{ steps.session_impl.outputs.id }}"
+            fi
+          fi
+          claude -p "$PROMPT" $RESUME_FLAG \
             --max-turns 60 \
             --verbose \
             --mcp-config .mcp.json \
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Upload impl Claude session
+        if: always() && env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.session_impl.outputs.id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-${{ env.TASK_ID }}-impl
+          path: ~/.claude/projects/**/${{ steps.session_impl.outputs.id }}.jsonl
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: ignore
 
       - name: Detect failure reason
         id: detect
@@ -433,13 +537,65 @@ jobs:
             [ -n "$FAILED" ] && echo "CHECKS_FAILED=true" >> "$GITHUB_ENV"
           fi
 
+      - name: Derive buildfix session ID
+        id: session_buildfix
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        run: |
+          SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'claudopilot:' + '$TASK_ID' + ':buildfix'))")
+          echo "id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Restore prior buildfix session
+        id: restore_buildfix
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-session-${{ env.TASK_ID }}-buildfix
+          path: ~/.claude/projects/restored/
+
+      - name: Move restored buildfix session into place
+        id: place_buildfix
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.restore_buildfix.outcome == 'success'
+        run: |
+          SESSION_ID="${{ steps.session_buildfix.outputs.id }}"
+          JSONL=$(find ~/.claude/projects/restored -name "${SESSION_ID}.jsonl" -type f 2>/dev/null | head -1)
+          if [ -n "$JSONL" ]; then
+            PROJECT_HASH=$(pwd | sed 's|/|-|g')
+            mkdir -p "$HOME/.claude/projects/$PROJECT_HASH"
+            cp "$JSONL" "$HOME/.claude/projects/$PROJECT_HASH/"
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+            echo "Restored prior session $SESSION_ID into $HOME/.claude/projects/$PROJECT_HASH/"
+          else
+            echo "Artifact present but no matching .jsonl for $SESSION_ID — starting fresh"
+          fi
+
       - name: Fix build errors
+        id: buildfix
         if: env.CHECKS_FAILED == 'true'
         run: |
           echo "Build verification failed. Asking Claude to fix..."
-          claude -p "The build is failing. Run the failing command(s), read the errors, and fix them. Then commit the fix." \
+          RESUME_FLAG=""
+          if [ "$CLAUDOPILOT_PERSIST_SESSIONS" = "true" ] && [ -n "${{ steps.session_buildfix.outputs.id }}" ]; then
+            if [ "${{ steps.place_buildfix.outputs.restored }}" = "true" ]; then
+              RESUME_FLAG="--resume ${{ steps.session_buildfix.outputs.id }}"
+            else
+              RESUME_FLAG="--session-id ${{ steps.session_buildfix.outputs.id }}"
+            fi
+          fi
+          claude -p "The build is failing. Run the failing command(s), read the errors, and fix them. Then commit the fix." $RESUME_FLAG \
             --max-turns 15 \
             --allowedTools "Read,Edit,Write,Bash"
+
+      - name: Upload buildfix Claude session
+        if: always() && env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.session_buildfix.outputs.id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-${{ env.TASK_ID }}-buildfix
+          path: ~/.claude/projects/**/${{ steps.session_buildfix.outputs.id }}.jsonl
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: ignore
+
 
       - name: Push commits
         run: |
@@ -690,6 +846,38 @@ jobs:
         run: |
           sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
 
+      - name: Derive verify session ID
+        id: session_verify
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        run: |
+          SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'claudopilot:' + '$TASK_ID' + ':verify'))")
+          echo "id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Restore prior verify session
+        id: restore_verify
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-session-${{ env.TASK_ID }}-verify
+          path: ~/.claude/projects/restored/
+
+      - name: Move restored verify session into place
+        id: place_verify
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.restore_verify.outcome == 'success'
+        run: |
+          SESSION_ID="${{ steps.session_verify.outputs.id }}"
+          JSONL=$(find ~/.claude/projects/restored -name "${SESSION_ID}.jsonl" -type f 2>/dev/null | head -1)
+          if [ -n "$JSONL" ]; then
+            PROJECT_HASH=$(pwd | sed 's|/|-|g')
+            mkdir -p "$HOME/.claude/projects/$PROJECT_HASH"
+            cp "$JSONL" "$HOME/.claude/projects/$PROJECT_HASH/"
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+            echo "Restored prior session $SESSION_ID into $HOME/.claude/projects/$PROJECT_HASH/"
+          else
+            echo "Artifact present but no matching .jsonl for $SESSION_ID — starting fresh"
+          fi
+
       - name: Run verify-pr
         id: verify
         continue-on-error: true
@@ -699,11 +887,29 @@ jobs:
           set -o pipefail
           export ARGUMENTS="$TASK_ID"
           PROMPT=$(sed "s/\$ARGUMENTS/$TASK_ID/g" .claude/commands/verify-pr.md)
-          claude -p "$PROMPT" \
+          RESUME_FLAG=""
+          if [ "$CLAUDOPILOT_PERSIST_SESSIONS" = "true" ] && [ -n "${{ steps.session_verify.outputs.id }}" ]; then
+            if [ "${{ steps.place_verify.outputs.restored }}" = "true" ]; then
+              RESUME_FLAG="--resume ${{ steps.session_verify.outputs.id }}"
+            else
+              RESUME_FLAG="--session-id ${{ steps.session_verify.outputs.id }}"
+            fi
+          fi
+          claude -p "$PROMPT" $RESUME_FLAG \
             --max-turns 40 \
             --verbose \
             --mcp-config .mcp.json \
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Upload verify Claude session
+        if: always() && env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.session_verify.outputs.id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-${{ env.TASK_ID }}-verify
+          path: ~/.claude/projects/**/${{ steps.session_verify.outputs.id }}.jsonl
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: ignore
 
       - name: Push any verify commits
         if: always()
@@ -858,6 +1064,38 @@ jobs:
         run: |
           sed -i "s|\${CLICKUP_API_KEY}|$CLICKUP_API_KEY|g" .mcp.json
 
+      - name: Derive verify session ID
+        id: session_verify
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        run: |
+          SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'claudopilot:' + '$TASK_ID' + ':verify'))")
+          echo "id=$SESSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Restore prior verify session
+        id: restore_verify
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-session-${{ env.TASK_ID }}-verify
+          path: ~/.claude/projects/restored/
+
+      - name: Move restored verify session into place
+        id: place_verify
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.restore_verify.outcome == 'success'
+        run: |
+          SESSION_ID="${{ steps.session_verify.outputs.id }}"
+          JSONL=$(find ~/.claude/projects/restored -name "${SESSION_ID}.jsonl" -type f 2>/dev/null | head -1)
+          if [ -n "$JSONL" ]; then
+            PROJECT_HASH=$(pwd | sed 's|/|-|g')
+            mkdir -p "$HOME/.claude/projects/$PROJECT_HASH"
+            cp "$JSONL" "$HOME/.claude/projects/$PROJECT_HASH/"
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+            echo "Restored prior session $SESSION_ID into $HOME/.claude/projects/$PROJECT_HASH/"
+          else
+            echo "Artifact present but no matching .jsonl for $SESSION_ID — starting fresh"
+          fi
+
       - name: Run verify-pr
         id: verify
         continue-on-error: true
@@ -867,11 +1105,29 @@ jobs:
           set -o pipefail
           export ARGUMENTS="$TASK_ID"
           PROMPT=$(sed "s/\$ARGUMENTS/$TASK_ID/g" .claude/commands/verify-pr.md)
-          claude -p "$PROMPT" \
+          RESUME_FLAG=""
+          if [ "$CLAUDOPILOT_PERSIST_SESSIONS" = "true" ] && [ -n "${{ steps.session_verify.outputs.id }}" ]; then
+            if [ "${{ steps.place_verify.outputs.restored }}" = "true" ]; then
+              RESUME_FLAG="--resume ${{ steps.session_verify.outputs.id }}"
+            else
+              RESUME_FLAG="--session-id ${{ steps.session_verify.outputs.id }}"
+            fi
+          fi
+          claude -p "$PROMPT" $RESUME_FLAG \
             --max-turns 40 \
             --verbose \
             --mcp-config .mcp.json \
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment" 2>&1 | tee /tmp/claude-output.log
+
+      - name: Upload verify Claude session
+        if: always() && env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.session_verify.outputs.id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-${{ env.TASK_ID }}-verify
+          path: ~/.claude/projects/**/${{ steps.session_verify.outputs.id }}.jsonl
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: ignore
 
       - name: Push any verify commits
         if: always()
