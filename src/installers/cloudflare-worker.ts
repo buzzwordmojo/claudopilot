@@ -640,7 +640,8 @@ export default {
 
     if (!response.ok) {
       const body = await response.text();
-      // Best-effort: notify ClickUp task about dispatch failure
+      // Non-fatal at the webhook level (return 200 to avoid ClickUp retries)
+      // but mark the task blocked + comment so humans see the failure.
       try {
         await fetch(
           'https://api.clickup.com/api/v2/task/' + taskId + '/comment',
@@ -648,7 +649,7 @@ export default {
             method: 'POST',
             headers: { Authorization: '${clickupApiKey}', 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              comment_text: '❌ [CLAUDOPILOT] GitHub Actions dispatch failed — the workflow could not be triggered. Check GitHub PAT permissions and repository settings.',
+              comment_text: '❌ [CLAUDOPILOT] GitHub Actions dispatch failed — workflow could not be triggered. Task moved to blocked. Check GitHub PAT permissions and repository settings.',
               notify_all: true,
             }),
           }
@@ -662,11 +663,12 @@ export default {
           }
         );
       } catch (e) {
-        // Best-effort — don't block the error response
+        // Best-effort — if ClickUp API is also down, still return 200.
       }
-      return new Response('GitHub dispatch failed: ' + body, {
-        status: 500,
-      });
+      return new Response(
+        JSON.stringify({ task_id: taskId, status: 'blocked', dispatch_error: body, automations: results.automations }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
     return new Response(
