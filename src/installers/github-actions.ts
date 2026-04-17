@@ -115,6 +115,65 @@ function getCompanionRepos(config: ClaudopilotConfig): RepoConfig[] {
   return config.project.repos.filter(r => r.role === "companion");
 }
 
+function generateVerifyScript(config: ClaudopilotConfig): string {
+  const repos = config.project.repos;
+  const baseBranch = config.github.baseBranch ?? "main";
+  const lines: string[] = [];
+  lines.push(`FAILED=""`);
+
+  for (const repo of repos) {
+    const dir = repo.path === "." ? "." : repo.name;
+    // For the primary repo, diff against base branch excluding companion dirs
+    // For companions, check for changes inside their separate git repo
+    const diffCheck = repo.role === "primary" || repo.path === "."
+      ? `git diff --name-only origin/${baseBranch}...HEAD -- . ':!${repos.filter(r => r.path !== ".").map(r => r.name).join("' ':!")}' | grep -q .`
+      : `git -C ${dir} diff --name-only origin/${baseBranch}...HEAD 2>/dev/null | grep -q .`;
+
+    switch (repo.type) {
+      case "nextjs":
+      case "nestjs":
+        lines.push(`# ${repo.name} (${repo.type})`);
+        lines.push(`if ${diffCheck}; then`);
+        lines.push(`  echo "=== Verifying ${repo.name} (${repo.type}) — changes detected ==="`);
+        lines.push(`  cd ${dir}`);
+        lines.push(`  npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts 2>/dev/null || true`);
+        lines.push(`  if [ -f tsconfig.json ] && npx tsc --version 2>/dev/null; then`);
+        lines.push(`    npx tsc --noEmit 2>&1 || FAILED="\$FAILED ${repo.name}:typecheck"`);
+        lines.push(`  fi`);
+        lines.push(`  if grep -q '"lint"' package.json 2>/dev/null; then`);
+        lines.push(`    npm run lint 2>&1 || FAILED="\$FAILED ${repo.name}:lint"`);
+        lines.push(`  fi`);
+        lines.push(`  cd \$GITHUB_WORKSPACE`);
+        lines.push(`else`);
+        lines.push(`  echo "=== Skipping ${repo.name} — no changes ==="`);
+        lines.push(`fi`);
+        break;
+
+      case "fastapi":
+        lines.push(`# ${repo.name} (${repo.type})`);
+        lines.push(`if ${diffCheck}; then`);
+        lines.push(`  echo "=== Verifying ${repo.name} (${repo.type}) — changes detected ==="`);
+        lines.push(`  cd ${dir}`);
+        lines.push(`  if [ -f requirements.txt ] || [ -d requirements ]; then`);
+        lines.push(`    python -m py_compile app/main.py 2>&1 || FAILED="\$FAILED ${repo.name}:syntax"`);
+        lines.push(`  fi`);
+        lines.push(`  cd \$GITHUB_WORKSPACE`);
+        lines.push(`else`);
+        lines.push(`  echo "=== Skipping ${repo.name} — no changes ==="`);
+        lines.push(`fi`);
+        break;
+
+      case "generic":
+      default:
+        // Skip generic repos — nothing meaningful to verify
+        break;
+    }
+  }
+
+  lines.push(`[ -n "\$FAILED" ] && echo "CHECKS_FAILED=true" >> "\$GITHUB_ENV" && echo "Failed checks:\$FAILED"`);
+  return lines.join("\n          ");
+}
+
 function generateCompanionCheckoutSteps(companions: RepoConfig[], fetchDepth: number): string {
   return companions.map(c => `
       - uses: actions/checkout@v4
@@ -879,9 +938,6 @@ ${generateMcpConfigStep(config)}
             echo "failure_reason=error" >> "\$GITHUB_OUTPUT"
           fi
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts 2>/dev/null || true
-
       - name: Verify build
         id: verify
         continue-on-error: true
@@ -890,15 +946,8 @@ ${generateMcpConfigStep(config)}
             echo "Running claudopilot:verify..."
             npm run claudopilot:verify 2>&1 || echo "CHECKS_FAILED=true" >> "\$GITHUB_ENV"
           else
-            echo "No claudopilot:verify script — falling back to tsc + lint"
-            FAILED=""
-            if npx tsc --version 2>/dev/null; then
-              npx tsc --noEmit 2>&1 || FAILED="typecheck"
-            fi
-            if grep -q '"lint"' package.json 2>/dev/null; then
-              npm run lint 2>&1 || FAILED="\$FAILED lint"
-            fi
-            [ -n "\$FAILED" ] && echo "CHECKS_FAILED=true" >> "\$GITHUB_ENV"
+            echo "Running per-repo verification..."
+            ${generateVerifyScript(config)}
           fi
 
       - name: Fix build errors
