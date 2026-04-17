@@ -548,13 +548,13 @@ function generateMoveToBlocked(config: ClaudopilotConfig): string {
     : undefined;
 
   if (userId) {
-    return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\\$TASK_ID" \\
-              -H "Authorization: \\$CLICKUP_API_KEY" \\
+    return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"blocked","assignees":{"add":[${userId}]}}'`;
   }
-  return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\\$TASK_ID" \\
-              -H "Authorization: \\$CLICKUP_API_KEY" \\
+  return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"blocked"}'`;
 }
