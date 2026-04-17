@@ -461,7 +461,22 @@ function generateAuthRefreshStep(): string {
 function generateMcpConfigStep(_config: ClaudopilotConfig): string {
   return `      - name: Inject secrets into MCP config
         run: |
-          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json`;
+          sed -i "s|\\\${CLICKUP_API_KEY}|\$CLICKUP_API_KEY|g" .mcp.json
+
+      - name: Install MCP server dependencies
+        run: |
+          # The MCP server bundle isn't fully standalone — if its package.json
+          # declares dependencies (e.g. @modelcontextprotocol/sdk), install them
+          # so Node can resolve the imports at runtime. No-op for future
+          # claudopilot versions that ship a properly-bundled server.
+          if [ -f .claude/mcp-server/package.json ] && \\
+             node -e "const p=require('./.claude/mcp-server/package.json'); process.exit(p.dependencies && Object.keys(p.dependencies).length ? 0 : 1)" 2>/dev/null; then
+            cd .claude/mcp-server
+            npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
+            cd ../..
+          else
+            echo "MCP server has no runtime dependencies — skipping install"
+          fi`;
 }
 
 /**
