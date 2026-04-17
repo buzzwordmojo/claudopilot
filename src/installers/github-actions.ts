@@ -469,13 +469,13 @@ function generateMoveToBlocked(config: ClaudopilotConfig): string {
     : undefined;
 
   if (userId) {
-    return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\\$TASK_ID" \\
-              -H "Authorization: \\$CLICKUP_API_KEY" \\
+    return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"blocked","assignees":{"add":[${userId}]}}'`;
   }
-  return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\\$TASK_ID" \\
-              -H "Authorization: \\$CLICKUP_API_KEY" \\
+  return `curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \\
+              -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
               -d '{"status":"blocked"}'`;
 }
@@ -807,6 +807,8 @@ ${generateSessionUploadStep("plan")}
     name: 🔨 Setup Branch
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      rebase_failed: \${{ steps.branch.outputs.rebase_failed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -825,19 +827,34 @@ ${generateSessionUploadStep("plan")}
             -d '{"comment_text":"🤖 [CLAUDOPILOT] Implementation started — writing tests and code..."}'
 
       - name: Create or resume branch
+        id: branch
         run: |
           git config user.name "${githubConfig.commitName ?? "claudopilot"}"
           git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
           if git fetch origin "\$BRANCH" 2>/dev/null; then
             echo "Resuming existing branch \$BRANCH"
             git checkout "\$BRANCH"
-            git rebase origin/main || git rebase --abort
+            if ! git rebase origin/main; then
+              git rebase --abort
+              echo "::error::Rebase of \$BRANCH onto main failed — manual conflict resolution required"
+              echo "rebase_failed=true" >> "\$GITHUB_OUTPUT"
+              exit 1
+            fi
             git push --force-with-lease origin "\$BRANCH"
           else
             echo "Creating new branch \$BRANCH"
             git checkout -b "\$BRANCH"
             git push --set-upstream origin "\$BRANCH"
           fi
+
+      - name: Report rebase failure to ClickUp
+        if: failure() && steps.branch.outputs.rebase_failed == 'true'
+        run: |
+          curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
+            -H "Authorization: \$CLICKUP_API_KEY" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"comment_text\\":\\"🚧 [CLAUDOPILOT] Branch \\\`\$BRANCH\\\` has rebase conflicts with \\\`main\\\`. Manually rebase or delete the branch, then move task back to Approved.\\"}"
+          ${generateMoveToBlocked(config)}
 ${implSetupCompanionSteps}
 
   implement:
