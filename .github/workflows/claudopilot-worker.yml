@@ -150,7 +150,9 @@ jobs:
         id: detect
         if: always() && steps.claude.outcome == 'failure'
         run: |
-          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+          if grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=auth_expired" >> "$GITHUB_OUTPUT"
           elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=token_exhausted" >> "$GITHUB_OUTPUT"
@@ -188,6 +190,16 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"🔑 [CLAUDOPILOT] Planning failed — Claude authentication expired. Run `claudopilot auth` to refresh credentials, then move task back to Planning."}'
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
+              -H "Authorization: \$CLICKUP_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"blocked"}'
+          elif [ "$FAILURE" = "max_turns" ]; then
+            MSG="Planning ran out of turns (60 max) before completing. Progress so far is captured in the [ARCHITECT] and [RED TEAM] comments above. Move task back to Planning to continue — the next run will read existing comments and the spec file to resume where it left off.\\n\\n⏩ [CONTINUATION HINT] Resume from the last [ARCHITECT] spec draft. Address any outstanding [RED TEAM] findings. Skip completed architect/red-team rounds."
+            curl -s -X POST "https://api.clickup.com/api/v2/task/$TASK_ID/comment" \
+              -H "Authorization: $CLICKUP_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
             curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
               -H "Authorization: \$CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
@@ -388,7 +400,9 @@ jobs:
         id: detect
         if: always() && steps.claude.outcome == 'failure'
         run: |
-          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+          if grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=auth_expired" >> "$GITHUB_OUTPUT"
           elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=token_exhausted" >> "$GITHUB_OUTPUT"
@@ -529,6 +543,16 @@ jobs:
               -H "Authorization: \$CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"status":"blocked"}'
+          elif [ "$FAILURE_REASON" = "max_turns" ]; then
+            MSG="Implementation ran out of turns (60 max). All commits have been pushed to the branch. Move task back to Approved to continue — the next run will detect the existing branch and resume from where it left off.\\n\\n⏩ [CONTINUATION HINT] Check git log on branch $BRANCH for completed subtasks. Skip those and continue with the next incomplete subtask."
+            curl -s -X POST "https://api.clickup.com/api/v2/task/$TASK_ID/comment" \
+              -H "Authorization: $CLICKUP_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
+              -H "Authorization: \$CLICKUP_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"blocked"}'
           elif [ "$FAILURE_REASON" = "token_exhausted" ]; then
             MSG="Implementation paused — Claude token/rate limit reached."
             [ -n "$RESET_INFO" ] && MSG="$MSG $RESET_INFO."
@@ -545,7 +569,7 @@ jobs:
             curl -s -X POST "https://api.clickup.com/api/v2/task/$TASK_ID/comment" \
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
-              -d '{"comment_text":"⏸️ [CLAUDOPILOT] Implementation paused — reached turn limit. Progress saved to branch. Move task back to Approved to continue."}'
+              -d '{"comment_text":"❌ [CLAUDOPILOT] Implementation failed — check GitHub Actions logs for details."}'
             curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
               -H "Authorization: \$CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
@@ -743,7 +767,9 @@ jobs:
         id: detect
         if: always() && steps.claude.outcome == 'failure'
         run: |
-          if grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+          if grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "failure_reason=max_turns" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=auth_expired" >> "$GITHUB_OUTPUT"
           elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
             echo "failure_reason=token_exhausted" >> "$GITHUB_OUTPUT"
@@ -781,6 +807,16 @@ jobs:
               -H "Authorization: $CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \
               -d '{"comment_text":"🔑 [CLAUDOPILOT] Fix feedback failed — Claude authentication expired. Run `claudopilot auth` to refresh credentials, then check the GitHub Actions run for details."}'
+            curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
+              -H "Authorization: \$CLICKUP_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"blocked"}'
+          elif [ "$FAILURE_REASON" = "max_turns" ]; then
+            MSG="Fix feedback ran out of turns (40 max). Any completed fixes have been pushed to the branch. Move task back to Fixing to continue — the next run will pick up remaining feedback items.\\n\\n⏩ [CONTINUATION HINT] Check the PR for which review comments have already been resolved. Focus on the remaining unresolved comments."
+            curl -s -X POST "https://api.clickup.com/api/v2/task/$TASK_ID/comment" \
+              -H "Authorization: $CLICKUP_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"comment_text\":\"⏸️ [CLAUDOPILOT] $MSG\"}"
             curl -s -X PUT "https://api.clickup.com/api/v2/task/\$TASK_ID" \
               -H "Authorization: \$CLICKUP_API_KEY" \
               -H "Content-Type: application/json" \

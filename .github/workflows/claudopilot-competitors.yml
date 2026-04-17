@@ -140,6 +140,15 @@ jobs:
         run: |
           if [ "${{ steps.claude.outcome }}" = "success" ]; then
             echo "✅ Competitor analysis complete"
+          elif grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "⏸️ Competitor analysis ran out of turns (40 max). Any results generated before the limit were saved."
+            exit 1
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "::error::🔑 Competitor analysis failed — Claude authentication expired. Run claudopilot auth to refresh credentials."
+            exit 1
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "::warning::⏸️ Competitor analysis paused — Claude token/rate limit reached. Will retry on next scheduled run."
+            exit 1
           else
             echo "❌ Competitor analysis failed — check logs"
             exit 1

@@ -139,8 +139,21 @@ jobs:
             else
               echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
             fi
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "::error::🔑 Improve engine failed — Claude authentication expired. Run claudopilot auth to refresh credentials."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "::warning::⏸️ Improve engine paused — Claude token/rate limit reached. Skipping remaining rounds."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "⏸️ Improve engine ran out of turns. Any ideas generated were posted to ClickUp."
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            # Claude was interrupted (turn limit, rate limit, or error)
+            # Unknown error — continue if state exists
             if [ -f /tmp/improve-state.md ]; then
               echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
             else
@@ -306,8 +319,21 @@ jobs:
             else
               echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
             fi
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "::error::🔑 Improve engine failed — Claude authentication expired. Run claudopilot auth to refresh credentials."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "::warning::⏸️ Improve engine paused — Claude token/rate limit reached. Skipping remaining rounds."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "⏸️ Improve engine ran out of turns. Any ideas generated were posted to ClickUp."
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            # Claude was interrupted (turn limit, rate limit, or error)
+            # Unknown error — continue if state exists
             if [ -f /tmp/improve-state.md ]; then
               echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
             else
@@ -473,8 +499,21 @@ jobs:
             else
               echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
             fi
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "::error::🔑 Improve engine failed — Claude authentication expired. Run claudopilot auth to refresh credentials."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "::warning::⏸️ Improve engine paused — Claude token/rate limit reached. Skipping remaining rounds."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "⏸️ Improve engine ran out of turns. Any ideas generated were posted to ClickUp."
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            # Claude was interrupted (turn limit, rate limit, or error)
+            # Unknown error — continue if state exists
             if [ -f /tmp/improve-state.md ]; then
               echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
             else
@@ -640,8 +679,21 @@ jobs:
             else
               echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
             fi
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "::error::🔑 Improve engine failed — Claude authentication expired. Run claudopilot auth to refresh credentials."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "::warning::⏸️ Improve engine paused — Claude token/rate limit reached. Skipping remaining rounds."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "⏸️ Improve engine ran out of turns. Any ideas generated were posted to ClickUp."
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            # Claude was interrupted (turn limit, rate limit, or error)
+            # Unknown error — continue if state exists
             if [ -f /tmp/improve-state.md ]; then
               echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
             else
@@ -807,8 +859,21 @@ jobs:
             else
               echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
             fi
+          elif grep -qiE "authentication_error|token.has.expired|OAuth.token|invalid.*api.key|unauthorized|401" /tmp/claude-output.log 2>/dev/null; then
+            echo "::error::🔑 Improve engine failed — Claude authentication expired. Run claudopilot auth to refresh credentials."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "hit your limit|rate.limit|token.limit|quota|spending.limit|capacity|too many requests|resource.exhausted|overloaded|529|account.paym|billing" /tmp/claude-output.log 2>/dev/null; then
+            echo "::warning::⏸️ Improve engine paused — Claude token/rate limit reached. Skipping remaining rounds."
+            echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "Reached max turns" /tmp/claude-output.log 2>/dev/null; then
+            echo "⏸️ Improve engine ran out of turns. Any ideas generated were posted to ClickUp."
+            if [ -f /tmp/improve-state.md ]; then
+              echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_continuation=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            # Claude was interrupted (turn limit, rate limit, or error)
+            # Unknown error — continue if state exists
             if [ -f /tmp/improve-state.md ]; then
               echo "needs_continuation=true" >> "$GITHUB_OUTPUT"
             else
