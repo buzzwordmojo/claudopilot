@@ -114,6 +114,13 @@ export interface GitHubConfig {
   anthropicKeySecretName: string;
   commitName: string;
   commitEmail: string;
+  /**
+   * Preferred base branch for claudopilot-created branches and PRs.
+   * Per-repo fallback: if this branch doesn't exist in a given repo, the
+   * workflow falls back to the repo's default branch (e.g. main/master).
+   * Defaults to "main" when unset.
+   */
+  baseBranch?: string;
 }
 
 export interface CloudflareConfig {

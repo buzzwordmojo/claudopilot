@@ -133,6 +133,7 @@ export async function configGithub(): Promise<void> {
     anthropicKeySecretName: githubConfig.anthropicKeySecretName,
     commitName: githubConfig.commitName,
     commitEmail: githubConfig.commitEmail,
+    baseBranch: githubConfig.baseBranch,
   };
 
   await saveSecrets({ GITHUB_PAT: githubConfig.pat });

@@ -303,7 +303,14 @@ function generateVisualVerificationSteps(config: ClaudopilotConfig): string {
           ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           mkdir -p /tmp/screenshots
-          git diff origin/main...HEAD > /tmp/pr-diff.txt
+          if [ -n "\$BASE_BRANCH" ] && git ls-remote --exit-code --heads origin "\$BASE_BRANCH" >/dev/null 2>&1; then
+            VV_BASE="\$BASE_BRANCH"
+          else
+            VV_BASE=\$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')
+            [ -z "\$VV_BASE" ] && VV_BASE="main"
+          fi
+          git fetch origin "\$VV_BASE" 2>/dev/null || true
+          git diff "origin/\$VV_BASE...HEAD" > /tmp/pr-diff.txt
 
           claude -p "You are performing visual verification of a preview deployment.
 
@@ -478,10 +485,29 @@ function generateMoveToBlocked(config: ClaudopilotConfig): string {
               -d '{"status":"blocked"}'`;
 }
 
+/**
+ * Bash snippet that resolves the repo's base branch. Reads $BASE_BRANCH from env;
+ * if that branch exists on origin, exports $RESOLVED_BASE=$BASE_BRANCH; otherwise
+ * falls back to the repo's default branch (via `git remote show origin`) and ends
+ * with `main` as a last resort. Assumes the working directory is inside a checked
+ * out repo. Also runs `git fetch origin "$RESOLVED_BASE"` so callers can use
+ * `origin/$RESOLVED_BASE` immediately.
+ */
+const RESOLVE_BASE_BRANCH_SNIPPET = `          # Resolve base branch (prefer \$BASE_BRANCH, fall back to default)
+          if [ -n "\$BASE_BRANCH" ] && git ls-remote --exit-code --heads origin "\$BASE_BRANCH" >/dev/null 2>&1; then
+            RESOLVED_BASE="\$BASE_BRANCH"
+          else
+            RESOLVED_BASE=\$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')
+            [ -z "\$RESOLVED_BASE" ] && RESOLVED_BASE="main"
+          fi
+          echo "Resolved base branch: \$RESOLVED_BASE"
+          git fetch origin "\$RESOLVED_BASE" 2>/dev/null || true`;
+
 function generateWorkerWorkflow(config: ClaudopilotConfig): string {
   const companions = getCompanionRepos(config);
   const hasCompanions = companions.length > 0;
   const githubConfig = config.github;
+  const baseBranch = githubConfig.baseBranch ?? "main";
 
   // Companion env var listing paths for Claude context
   const companionEnvVar = hasCompanions
@@ -508,12 +534,16 @@ function generateWorkerWorkflow(config: ClaudopilotConfig): string {
           cd ${c.name}
           git config user.name "${githubConfig.commitName ?? "claudopilot"}"
           git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
+${RESOLVE_BASE_BRANCH_SNIPPET}
           if git fetch origin "\$BRANCH" 2>/dev/null; then
             echo "Resuming existing branch \$BRANCH in ${c.name}"
             git checkout "\$BRANCH"
+            git rebase "origin/\$RESOLVED_BASE" || git rebase --abort
+            git push --force-with-lease origin "\$BRANCH"
           else
-            echo "Creating new branch \$BRANCH in ${c.name}"
-            git checkout -b "\$BRANCH"
+            echo "Creating new branch \$BRANCH in ${c.name} from origin/\$RESOLVED_BASE"
+            git checkout -b "\$BRANCH" "origin/\$RESOLVED_BASE"
+            git push --set-upstream origin "\$BRANCH"
           fi`).join("\n")
     : "";
 
@@ -564,9 +594,14 @@ function generateWorkerWorkflow(config: ClaudopilotConfig): string {
           # Check ${c.name} for commits
           if [ -d "${c.name}" ]; then
             cd ${c.name}
-            git fetch origin main 2>/dev/null || git fetch origin master 2>/dev/null || true
-            DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}' || echo "main")
-            C_AHEAD=$(git log "origin/\$DEFAULT_BRANCH..HEAD" --oneline 2>/dev/null | wc -l)
+            if [ -n "\$BASE_BRANCH" ] && git ls-remote --exit-code --heads origin "\$BASE_BRANCH" >/dev/null 2>&1; then
+              C_BASE="\$BASE_BRANCH"
+            else
+              C_BASE=\$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')
+              [ -z "\$C_BASE" ] && C_BASE="main"
+            fi
+            git fetch origin "\$C_BASE" 2>/dev/null || true
+            C_AHEAD=\$(git log "origin/\$C_BASE..HEAD" --oneline 2>/dev/null | wc -l)
             if [ "\$C_AHEAD" -gt 0 ]; then
               C_PR=$(gh pr create \\
                 --repo ${c.remote} \\
@@ -578,7 +613,7 @@ function generateWorkerWorkflow(config: ClaudopilotConfig): string {
           See task description for full spec.
 
           Related primary PR: \$PR_URL" \\
-                --base "\$DEFAULT_BRANCH" \\
+                --base "\$C_BASE" \\
                 --head "\$BRANCH" 2>&1) || C_PR=""
               [ -n "\$C_PR" ] && ALL_PRS="\$ALL_PRS\\\\n🔗 ${c.name} PR: \$C_PR"
             fi
@@ -599,7 +634,8 @@ permissions:
 env:
   CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
   TASK_ID: \${{ github.event.client_payload.task_id }}
-  BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}${companionEnvVar}
+  BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}
+  BASE_BRANCH: "${baseBranch}"${companionEnvVar}
 
 # ═══════════════════════════════════════════
 # PLANNING
@@ -752,14 +788,15 @@ ${generateMcpConfigStep(config)}
         run: |
           git config user.name "${githubConfig.commitName ?? "claudopilot"}"
           git config user.email "${githubConfig.commitEmail ?? "noreply@claudopilot.dev"}"
+${RESOLVE_BASE_BRANCH_SNIPPET}
           if git fetch origin "\$BRANCH" 2>/dev/null; then
             echo "Resuming existing branch \$BRANCH"
             git checkout "\$BRANCH"
-            git rebase origin/main || git rebase --abort
+            git rebase "origin/\$RESOLVED_BASE" || git rebase --abort
             git push --force-with-lease origin "\$BRANCH"
           else
-            echo "Creating new branch \$BRANCH"
-            git checkout -b "\$BRANCH"
+            echo "Creating new branch \$BRANCH from origin/\$RESOLVED_BASE"
+            git checkout -b "\$BRANCH" "origin/\$RESOLVED_BASE"
             git push --set-upstream origin "\$BRANCH"
           fi
 ${implSetupCompanionSteps}
@@ -887,9 +924,10 @@ ${implFinalizeCompanionCheckouts}
       - name: Check for commits
         id: check
         run: |
-          git fetch origin main
-          COMMIT_COUNT=$(git log origin/main..HEAD --oneline 2>/dev/null | wc -l)
-          echo "Commits ahead of main: \$COMMIT_COUNT"
+${RESOLVE_BASE_BRANCH_SNIPPET}
+          echo "resolved_base=\$RESOLVED_BASE" >> "\$GITHUB_OUTPUT"
+          COMMIT_COUNT=\$(git log "origin/\$RESOLVED_BASE..HEAD" --oneline 2>/dev/null | wc -l)
+          echo "Commits ahead of \$RESOLVED_BASE: \$COMMIT_COUNT"
           if [ "\$COMMIT_COUNT" -gt 0 ]; then
             echo "has_commits=true" >> "\$GITHUB_OUTPUT"
           else
@@ -915,7 +953,7 @@ ${implFinalizeCompanionCheckouts}
 
           ## Changes
           See task description for full spec." \\
-              --base main \\
+              --base "\${{ steps.check.outputs.resolved_base }}" \\
               --head "\$BRANCH" 2>&1) || PR_URL=""
           fi
           echo "pr_url=\$PR_URL" >> "\$GITHUB_OUTPUT"

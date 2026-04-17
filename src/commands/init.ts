@@ -503,7 +503,7 @@ export async function init(options: InitOptions): Promise<void> {
       repos: allRepos,
     },
     pm: { tool: pmConfig.tool, workspaceId: pmConfig.workspaceId, spaceId: pmConfig.spaceId, listId: pmConfig.listId, statuses },
-    github: { owner: githubConfig.owner, repos: allGithubRepos, anthropicKeySecretName: githubConfig.anthropicKeySecretName, commitName: githubConfig.commitName, commitEmail: githubConfig.commitEmail },
+    github: { owner: githubConfig.owner, repos: allGithubRepos, anthropicKeySecretName: githubConfig.anthropicKeySecretName, commitName: githubConfig.commitName, commitEmail: githubConfig.commitEmail, baseBranch: githubConfig.baseBranch },
     cloudflare: cloudflareConfig
       ? { workerName: cloudflareConfig.workerName, workerUrl }
       : undefined,
@@ -883,12 +883,23 @@ export async function setupGitHub(savedPat?: string, existing?: GitHubConfig): P
     default: existing?.commitEmail,
   });
 
+  ui.hint([
+    "Preferred base branch for claudopilot branches and PRs.",
+    "If a given repo doesn't have this branch, the workflow falls",
+    "back to the repo's default branch (e.g. main/master).",
+  ]);
+  const baseBranch = await input({
+    message: "Preferred base branch:",
+    default: existing?.baseBranch ?? "main",
+  });
+
   return {
     owner,
     repos: [selectedRepo],
     anthropicKeySecretName: existing?.anthropicKeySecretName ?? "ANTHROPIC_API_KEY",
     commitName,
     commitEmail,
+    baseBranch,
     pat,
     fetchedRepos: repos,
   };

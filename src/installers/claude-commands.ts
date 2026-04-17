@@ -384,6 +384,7 @@ Output format:
 
 function generateImplementCommand(config: ClaudopilotConfig): string {
   const multiRepoContext = generateMultiRepoContext(config, "implement");
+  const baseBranch = config.github.baseBranch ?? "main";
 
   return `You are implementing ClickUp task: $ARGUMENTS
 ${multiRepoContext}
@@ -473,11 +474,18 @@ FINALIZE:
 1. Push the branch:
    git push origin claudopilot/$ARGUMENTS
 
-2. Create a pull request using gh:
+2. Create a pull request using gh. Target the configured base branch
+   (falls back to the repo's default branch if the configured base
+   doesn't exist in this repo):
+   BASE_REF="\${BASE_BRANCH:-${baseBranch}}"
+   if ! git ls-remote --exit-code --heads origin "\$BASE_REF" >/dev/null 2>&1; then
+     BASE_REF=\$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')
+     [ -z "\$BASE_REF" ] && BASE_REF="main"
+   fi
    gh pr create \\
      --title "<concise title from task name>" \\
      --body "## ClickUp Task\\nhttps://app.clickup.com/t/$ARGUMENTS\\n\\n## Changes\\n<summary of what was implemented>\\n\\n## Subtasks Completed\\n<list each subtask>" \\
-     --base main \\
+     --base "\$BASE_REF" \\
      --head claudopilot/$ARGUMENTS
 
 3. ${config.assignees?.reviewerUserId ? `Assign reviewer using clickup_update_task with:
@@ -509,6 +517,7 @@ function generateVerifyPrCommand(config: ClaudopilotConfig): string {
   const maxAttempts = maxRetries + 1;
   const lenses = config.verify?.lenses ?? DEFAULT_VERIFY_LENSES;
   const lensesList = lenses.map((l) => `- ${l}`).join("\n");
+  const baseBranch = config.github.baseBranch ?? "main";
 
   return `You are verifying a PR for ClickUp task: $ARGUMENTS
 
@@ -548,14 +557,22 @@ For each lens, run the appropriate check:
    classify as WARNING (not FAIL) — likely flaky tests.
    Result: PASS / FAIL / WARNING.
 
-5. **Merge conflict check**: Run:
-   git fetch origin main
-   git merge-tree \$(git merge-base HEAD origin/main) HEAD origin/main
+5. **Merge conflict check**: First resolve the base branch (prefer
+   \$BASE_BRANCH env var, fall back to the repo's default branch), then
+   check for conflicts:
+   BASE_REF="\${BASE_BRANCH:-${baseBranch}}"
+   if ! git ls-remote --exit-code --heads origin "\$BASE_REF" >/dev/null 2>&1; then
+     BASE_REF=\$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')
+     [ -z "\$BASE_REF" ] && BASE_REF="main"
+   fi
+   git fetch origin "\$BASE_REF"
+   git merge-tree \$(git merge-base HEAD "origin/\$BASE_REF") HEAD "origin/\$BASE_REF"
    Only FAIL if conflicts involve files this PR modified.
    Result: PASS (clean) / FAIL (conflicts in PR files) / WARNING (conflicts in other files).
 
 6. **Spec compliance**: Read the spec from the task description. Read the diff
-   (git diff origin/main...HEAD). Verify all spec requirements are implemented.
+   against the base branch resolved in step 5 (git diff "origin/\$BASE_REF...HEAD").
+   Verify all spec requirements are implemented.
    FAIL if any requirement is missing. Result: PASS / FAIL.
 
 7. **Scope check**: Verify no out-of-scope changes beyond what the spec requires.
