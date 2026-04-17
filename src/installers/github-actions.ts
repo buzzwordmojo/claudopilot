@@ -480,6 +480,65 @@ function generateMoveToBlocked(config: ClaudopilotConfig): string {
               -d '{"status":"blocked"}'`;
 }
 
+function generateSessionRestoreSteps(phaseSlug: string): string {
+  return `      - name: Derive ${phaseSlug} session ID
+        id: session_${phaseSlug}
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        run: |
+          SESSION_ID=\$(python3 -c "import uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, 'claudopilot:' + '\$TASK_ID' + ':${phaseSlug}'))")
+          echo "id=\$SESSION_ID" >> "\$GITHUB_OUTPUT"
+
+      - name: Restore prior ${phaseSlug} session
+        id: restore_${phaseSlug}
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-session-\${{ env.TASK_ID }}-${phaseSlug}
+          path: ~/.claude/projects/restored/
+
+      - name: Move restored ${phaseSlug} session into place
+        id: place_${phaseSlug}
+        if: env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.restore_${phaseSlug}.outcome == 'success'
+        run: |
+          SESSION_ID="\${{ steps.session_${phaseSlug}.outputs.id }}"
+          JSONL=\$(find ~/.claude/projects/restored -name "\${SESSION_ID}.jsonl" -type f 2>/dev/null | head -1)
+          if [ -n "\$JSONL" ]; then
+            PROJECT_HASH=\$(pwd | sed 's|/|-|g')
+            mkdir -p "\$HOME/.claude/projects/\$PROJECT_HASH"
+            cp "\$JSONL" "\$HOME/.claude/projects/\$PROJECT_HASH/"
+            echo "restored=true" >> "\$GITHUB_OUTPUT"
+            echo "Restored prior session \$SESSION_ID into \$HOME/.claude/projects/\$PROJECT_HASH/"
+          else
+            echo "Artifact present but no matching .jsonl for \$SESSION_ID — starting fresh"
+          fi
+`;
+}
+
+function generateSessionUploadStep(phaseSlug: string): string {
+  return `      - name: Upload ${phaseSlug} Claude session
+        if: always() && env.CLAUDOPILOT_PERSIST_SESSIONS == 'true' && steps.session_${phaseSlug}.outputs.id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-session-\${{ env.TASK_ID }}-${phaseSlug}
+          path: ~/.claude/projects/**/\${{ steps.session_${phaseSlug}.outputs.id }}.jsonl
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: ignore
+`;
+}
+
+function generateResumeFlagShell(phaseSlug: string): string {
+  return `RESUME_FLAG=""
+          if [ "\$CLAUDOPILOT_PERSIST_SESSIONS" = "true" ] && [ -n "\${{ steps.session_${phaseSlug}.outputs.id }}" ]; then
+            if [ "\${{ steps.place_${phaseSlug}.outputs.restored }}" = "true" ]; then
+              RESUME_FLAG="--resume \${{ steps.session_${phaseSlug}.outputs.id }}"
+            else
+              RESUME_FLAG="--session-id \${{ steps.session_${phaseSlug}.outputs.id }}"
+            fi
+          fi`;
+}
+
 function generateWorkerWorkflow(config: ClaudopilotConfig): string {
   const companions = getCompanionRepos(config);
   const hasCompanions = companions.length > 0;
@@ -601,7 +660,11 @@ permissions:
 env:
   CLICKUP_API_KEY: \${{ secrets.CLICKUP_API_KEY }}
   TASK_ID: \${{ github.event.client_payload.task_id }}
-  BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}${companionEnvVar}
+  BRANCH: claudopilot/\${{ github.event.client_payload.task_id }}
+  # Set CLAUDOPILOT_PERSIST_SESSIONS=true as a repo variable to enable
+  # cross-dispatch Claude session resume (so max-turns failures can pick up
+  # the same architect/red-team conversation on the next run).
+  CLAUDOPILOT_PERSIST_SESSIONS: \${{ vars.CLAUDOPILOT_PERSIST_SESSIONS || 'false' }}${companionEnvVar}
 
 # ═══════════════════════════════════════════
 # PLANNING
@@ -647,6 +710,7 @@ ${planCompanionCheckouts}
 ${generateAuthRefreshStep()}
 ${generateMcpConfigStep(config)}
 
+${generateSessionRestoreSteps("plan")}
       - name: Run planning loop
         id: claude
         continue-on-error: true
@@ -655,12 +719,14 @@ ${generateMcpConfigStep(config)}
           export ARGUMENTS="\$TASK_ID"
           # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
           PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/plan-feature.md)
-          claude -p "\$PROMPT" \\
+          ${generateResumeFlagShell("plan")}
+          claude -p "\$PROMPT" \$RESUME_FLAG \\
             --max-turns 60 \\
             --verbose \\
             --mcp-config .mcp.json \\
             --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
 
+${generateSessionUploadStep("plan")}
       - name: Detect failure reason
         id: detect
         if: always() && steps.claude.outcome == 'failure'
@@ -807,6 +873,7 @@ ${implCompanionCheckouts}
 ${generateAuthRefreshStep()}
 ${generateMcpConfigStep(config)}
 
+${generateSessionRestoreSteps("impl")}
       - name: Write code
         id: claude
         continue-on-error: true
@@ -817,12 +884,14 @@ ${generateMcpConfigStep(config)}
           export ARGUMENTS="\$TASK_ID"
           # Substitute $ARGUMENTS in the prompt (no longer needs $CLICKUP_API_KEY — MCP handles auth)
           PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/implement.md)
-          claude -p "\$PROMPT" \\
+          ${generateResumeFlagShell("impl")}
+          claude -p "\$PROMPT" \$RESUME_FLAG \\
             --max-turns 60 \\
             --verbose \\
             --mcp-config .mcp.json \\
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_create_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment,mcp__clickup__clickup_get_list_tasks" 2>&1 | tee /tmp/claude-output.log
 
+${generateSessionUploadStep("impl")}
       - name: Detect failure reason
         id: detect
         if: always() && steps.claude.outcome == 'failure'
@@ -861,13 +930,18 @@ ${generateMcpConfigStep(config)}
             [ -n "\$FAILED" ] && echo "CHECKS_FAILED=true" >> "\$GITHUB_ENV"
           fi
 
+${generateSessionRestoreSteps("buildfix")}
       - name: Fix build errors
+        id: buildfix
         if: env.CHECKS_FAILED == 'true'
         run: |
           echo "Build verification failed. Asking Claude to fix..."
-          claude -p "The build is failing. Run the failing command(s), read the errors, and fix them. Then commit the fix." \\
+          ${generateResumeFlagShell("buildfix")}
+          claude -p "The build is failing. Run the failing command(s), read the errors, and fix them. Then commit the fix." \$RESUME_FLAG \\
             --max-turns 15 \\
             --allowedTools "Read,Edit,Write,Bash"
+
+${generateSessionUploadStep("buildfix")}
 
       - name: Push commits
         run: |
@@ -1034,6 +1108,7 @@ ${config.verify?.enabled ? `  # ════════════════
 ${generateAuthRefreshStep()}
 ${generateMcpConfigStep(config)}
 
+${generateSessionRestoreSteps("verify")}
       - name: Run verify-pr
         id: verify
         continue-on-error: true
@@ -1043,12 +1118,14 @@ ${generateMcpConfigStep(config)}
           set -o pipefail
           export ARGUMENTS="\$TASK_ID"
           PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/verify-pr.md)
-          claude -p "\$PROMPT" \\
+          ${generateResumeFlagShell("verify")}
+          claude -p "\$PROMPT" \$RESUME_FLAG \\
             --max-turns 40 \\
             --verbose \\
             --mcp-config .mcp.json \\
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment" 2>&1 | tee /tmp/claude-output.log
 
+${generateSessionUploadStep("verify")}
       - name: Push any verify commits
         if: always()
         run: |
@@ -1127,6 +1204,7 @@ ${generateMcpConfigStep(config)}
 ${generateAuthRefreshStep()}
 ${generateMcpConfigStep(config)}
 
+${generateSessionRestoreSteps("verify")}
       - name: Run verify-pr
         id: verify
         continue-on-error: true
@@ -1136,12 +1214,14 @@ ${generateMcpConfigStep(config)}
           set -o pipefail
           export ARGUMENTS="\$TASK_ID"
           PROMPT=$(sed "s/\\$ARGUMENTS/\$TASK_ID/g" .claude/commands/verify-pr.md)
-          claude -p "\$PROMPT" \\
+          ${generateResumeFlagShell("verify")}
+          claude -p "\$PROMPT" \$RESUME_FLAG \\
             --max-turns 40 \\
             --verbose \\
             --mcp-config .mcp.json \\
             --allowedTools "Read,Edit,Write,Bash,mcp__clickup__clickup_get_task,mcp__clickup__clickup_update_task,mcp__clickup__clickup_get_task_comments,mcp__clickup__clickup_create_task_comment" 2>&1 | tee /tmp/claude-output.log
 
+${generateSessionUploadStep("verify")}
       - name: Push any verify commits
         if: always()
         run: |
