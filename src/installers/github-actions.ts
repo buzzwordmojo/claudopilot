@@ -959,6 +959,7 @@ ${generateMcpConfigStep(config)}
             --allowedTools "Read,Edit,Write,Bash"
 
       - name: Push commits
+        if: always()
         run: |
           git checkout -- .github/workflows/ 2>/dev/null || true
           git checkout -- .claude/commands/ 2>/dev/null || true
@@ -1032,7 +1033,7 @@ ${generateDeploymentDetectionStep(config)}
 ${generateVisualVerificationSteps(config)}
 
       - name: Post results to ClickUp
-        if: steps.check.outputs.has_commits == 'true'
+        if: always()
         env:
           PR_URL: \${{ steps.pr.outputs.pr_url }}
           ALL_PRS: \${{ steps.pr.outputs.all_prs }}
@@ -1041,8 +1042,9 @@ ${generateVisualVerificationSteps(config)}
           IMPL_OUTCOME: \${{ needs.implement.outputs.outcome }}
           FAILURE_REASON: \${{ needs.implement.outputs.failure_reason }}
           RESET_INFO: \${{ needs.implement.outputs.reset_info }}
+          HAS_COMMITS: \${{ steps.check.outputs.has_commits }}
         run: |
-          if [ "\$IMPL_OUTCOME" = "success" ]; then
+          if [ "\$IMPL_OUTCOME" = "success" ] && [ "\$HAS_COMMITS" = "true" ]; then
             MSG="Implementation complete."
             [ -n "\$ALL_PRS" ] && MSG="\$MSG\\\\n\\\\n\$ALL_PRS"
             [ -n "\$PREVIEW_URL" ] && MSG="\$MSG\\\\n🔗 Preview: \$PREVIEW_URL"
@@ -1071,7 +1073,7 @@ ${config.verify?.enabled ? `            # Verify phase enabled — do NOT move t
               -H "Content-Type: application/json" \\
               -d "{\\"comment_text\\":\\"⏸️ [CLAUDOPILOT] \$MSG\\"}"
             ${generateMoveToBlocked(config)}
-          else
+          elif [ "\$IMPL_OUTCOME" != "success" ]; then
             curl -s -X POST "https://api.clickup.com/api/v2/task/\$TASK_ID/comment" \\
               -H "Authorization: \$CLICKUP_API_KEY" \\
               -H "Content-Type: application/json" \\
